@@ -87,3 +87,9 @@ ENV/
 
 # Rope project settings
 .ropeproject
+
+.tf_env/
+.project
+.pydevproject
+
+video_prediction/tmp/
