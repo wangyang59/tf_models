@@ -21,7 +21,7 @@ import tensorflow as tf
 from tensorflow.python.platform import app
 from tensorflow.python.platform import flags
 
-from prediction_input import build_tfrecord_input
+from prediction_input2 import build_tfrecord_input
 from prediction_model2 import construct_model
 from visualize import plot_gif
 
@@ -37,7 +37,8 @@ VAL_INTERVAL = 200
 SAVE_INTERVAL = 2000
 
 # tf record data location:
-DATA_DIR = '/home/wangyang59/Data/robot/push/push_train'
+#DATA_DIR = '/home/wangyang59/Data/robot/push/push_train'
+DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf/train'
 
 FLAGS = flags.FLAGS
 
