@@ -19,6 +19,7 @@ import tensorflow as tf
 
 from tensorflow.contrib.slim import add_arg_scope
 from tensorflow.contrib.slim import layers
+from tensorflow.python.platform import flags
 
 
 def init_state(inputs,
@@ -43,9 +44,11 @@ def init_state(inputs,
   else:
     inferred_batch_size = 0
     batch_size = 0
-
+  
+  batch_size = flags.FLAGS.batch_size / flags.FLAGS.num_gpus
   initial_state = state_initializer(
-      tf.stack([batch_size] + state_shape),
+      #tf.stack([batch_size] + state_shape),
+      [batch_size] + [int(x) for x in state_shape],
       dtype=dtype)
   initial_state.set_shape([inferred_batch_size] + state_shape)
 
