@@ -93,3 +93,4 @@ ENV/
 .pydevproject
 
 video_prediction/tmp/
+nohup.out

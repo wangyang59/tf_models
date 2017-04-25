@@ -67,7 +67,8 @@ def construct_model(images,
                     stp=False,
                     cdna=True,
                     dna=False,
-                    context_frames=2):
+                    context_frames=2,
+                    global_shift=0):
   """Build convolutional lstm video predictor using STP, CDNA, or DNA.
 
   Args:
@@ -102,6 +103,7 @@ def construct_model(images,
   shifted_masks = []
   mask_lists = []
   entropy_losses = []
+  gs_kernels = []
   
   if k == -1:
     feedself = True
@@ -215,7 +217,12 @@ def construct_model(images,
       # This allows the network to also generate one image from scratch,
       # which is useful when regions of the image become unoccluded.
       guessed = tf.nn.sigmoid(enc7)
-
+      
+      if global_shift:
+        cdna_input = tf.reshape(hidden5, [int(batch_size), -1])
+        prev_image, gs_kernel = do_global_shift(prev_image, cdna_input, int(color_channels))
+        gs_kernels.append(gs_kernel)
+      
       masks = slim.layers.conv2d_transpose(
           enc6, num_masks, 1, stride=1, scope='convt7')
       masks_probs = tf.nn.softmax(tf.reshape(masks, [-1, num_masks]))
@@ -240,7 +247,7 @@ def construct_model(images,
           activation_fn=None)
       gen_states.append(current_state)
 
-  return gen_images, gen_states, shifted_masks, mask_lists, entropy_losses
+  return gen_images, gen_states, shifted_masks, mask_lists, entropy_losses, gs_kernels
 
 
 # def my_transformation(prev_image, mask_list, color_channels, guessed):
@@ -261,6 +268,39 @@ def construct_model(images,
 #     output += tf.nn.depthwise_conv2d(prev_image * mask, kernel, [1, 1, 1, 1], 'SAME')
 #   
 #   return output
+
+def do_global_shift(prev_image, cdna_input, color_channels):
+  batch_size = int(cdna_input.get_shape()[0])
+
+  # Predict kernels using linear function of last hidden layer.
+  cdna_kerns = slim.layers.fully_connected(
+      cdna_input,
+      DNA_KERN_SIZE * DNA_KERN_SIZE,
+      scope='global_shift_params',
+      activation_fn=None)
+
+  # Reshape and normalize.
+  cdna_kerns = tf.reshape(
+      cdna_kerns, [batch_size, DNA_KERN_SIZE, DNA_KERN_SIZE, 1, 1])
+  cdna_kerns = tf.nn.relu(cdna_kerns - RELU_SHIFT) + RELU_SHIFT
+  norm_factor = tf.reduce_sum(cdna_kerns, [1, 2, 3], keep_dims=True)
+  cdna_kerns /= norm_factor
+  cdna_kerns_output = cdna_kerns
+
+  cdna_kerns = tf.tile(cdna_kerns, [1, 1, 1, color_channels, 1])
+  cdna_kerns = tf.split(axis=0, num_or_size_splits=batch_size, value=cdna_kerns)
+  prev_images = tf.split(axis=0, num_or_size_splits=batch_size, value=prev_image)
+
+  # Transform image.
+  transformed = []
+  for kernel, preimg in zip(cdna_kerns, prev_images):
+    kernel = tf.squeeze(kernel)
+    if len(kernel.get_shape()) == 3:
+      kernel = tf.expand_dims(kernel, -1)
+    transformed.append(
+        tf.nn.depthwise_conv2d(preimg, kernel, [1, 1, 1, 1], 'SAME'))
+  transformed = tf.concat(axis=0, values=transformed)
+  return transformed, tf.squeeze(cdna_kerns_output)
 
 def my_transformation2(prev_image, mask_list, color_channels, guessed):
   kernels = []

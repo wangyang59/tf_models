@@ -4,6 +4,9 @@ import h5py
 import tensorflow as tf
 import numpy as np
 
+import multiprocessing
+import functools
+
 def _int64_feature(value):
   return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
 
@@ -12,7 +15,7 @@ def _bytes_feature(value):
   return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 
-def convert_to(h5_file, out_dir):
+def convert_to(out_dir, h5_file):
   """Converts a dataset to tfrecords."""
   sequence_length = 10
   f = h5py.File(h5_file, "r")
@@ -41,8 +44,14 @@ def main(unused_argv):
   h5_dir = '/home/wangyang59/Data/ILSVRC2016_h5/train/'
   h5_files = os.listdir(h5_dir)
   
-  for h5_file in h5_files[0:10]:
-    convert_to(os.path.join(h5_dir, h5_file), "/home/wangyang59/Data/ILSVRC2016_tf/train")
+#   for h5_file in h5_files[0:10]:
+#     convert_to(os.path.join(h5_dir, h5_file), "/home/wangyang59/Data/ILSVRC2016_tf/train")
+    
+  fun = functools.partial(convert_to, "/home/wangyang59/Data/ILSVRC2016_tf/train")
+  pool = multiprocessing.Pool(10)
+  pool.imap_unordered(fun, [os.path.join(h5_dir, h5_file) for h5_file in h5_files], chunksize=10)
+  pool.close()
+  pool.join()
 
 if __name__ == '__main__':
   tf.app.run()

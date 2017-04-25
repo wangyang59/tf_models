@@ -2,8 +2,17 @@ import moviepy.editor as mpy
 import os
 import cPickle
 import numpy as np
-from PIL import Image
 import matplotlib.pyplot as plt
+
+def blow_up(kernel, size):
+  kernel_h, kernel_w = kernel.shape
+  img = np.zeros((size, size), dtype=np.float32)
+  block_h = size / kernel_h
+  block_w = size / kernel_w
+  for i in range(kernel_h):
+    for j in range(kernel_w):
+      img[i*block_h:(i+1)*block_h, j*block_w:(j+1)*block_w] = kernel[i, j]
+  return img
 
 def merge(masks, orig_image, gen_image, shifted_mask, batch_num, gen_image_max):
   grey_cmap = plt.get_cmap("Greys")
@@ -25,8 +34,10 @@ def merge(masks, orig_image, gen_image, shifted_mask, batch_num, gen_image_max):
       tmp = seis_cmap(figures[idx][batch_num])[:, :, 0, 0:3]
     elif idx == len(masks) + 1:
       tmp = figures[idx][batch_num]
-    else:
+    elif idx == len(masks) + 2:
       tmp = figures[idx][batch_num] / gen_image_max
+    #else:
+    #  tmp = grey_cmap(blow_up(figures[idx][batch_num], img_size))[:, :, 0:3]
     img[j*(img_size+gap):j*(img_size+gap)+img_size, i*(img_size+gap):i*(img_size+gap)+img_size, :] = \
         tmp * 255.0
   

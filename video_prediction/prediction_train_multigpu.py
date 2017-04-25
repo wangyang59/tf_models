@@ -21,8 +21,8 @@ import tensorflow as tf
 from tensorflow.python.platform import app
 from tensorflow.python.platform import flags
 
-from prediction_input2 import build_tfrecord_input
-from prediction_model2 import construct_model
+from prediction_input import build_tfrecord_input, DATA_DIR
+from prediction_model3 import construct_model
 from visualize import plot_gif
 
 import os
@@ -35,10 +35,6 @@ VAL_INTERVAL = 200
 
 # How often to save a model checkpoint
 SAVE_INTERVAL = 2000
-
-# tf record data location:
-#DATA_DIR = '/home/wangyang59/Data/robot/push/push_train'
-DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf/train'
 
 FLAGS = flags.FLAGS
 
@@ -53,7 +49,8 @@ flags.DEFINE_integer('sequence_length', 10,
 flags.DEFINE_integer('context_frames', 2, '# of frames before predictions.')
 flags.DEFINE_integer('use_state', 1,
                      'Whether or not to give the state+action to the model')
-
+flags.DEFINE_integer('global_shift', 0,
+                     'Whether or not to do the global shift of the entire image')
 flags.DEFINE_string('model', 'CDNA',
                     'model architecture to use - CDNA, DNA, or STP')
 
@@ -96,6 +93,34 @@ def mean_squared_error(true, pred):
     mean squared error between ground truth and predicted image.
   """
   return tf.reduce_sum(tf.square(true - pred)) / tf.to_float(tf.size(pred))
+
+def weighted_mean_squared_error(true, pred, weight):
+  """L2 distance between tensors true and pred.
+
+  Args:
+    true: the ground truth image.
+    pred: the predicted image.
+  Returns:
+    mean squared error between ground truth and predicted image.
+  """
+  return tf.reduce_sum(tf.square(true - pred) * weight) / tf.to_float(tf.size(pred))
+
+def mean_L1_error(true, pred):
+  """L2 distance between tensors true and pred.
+
+  Args:
+    true: the ground truth image.
+    pred: the predicted image.
+  Returns:
+    mean squared error between ground truth and predicted image.
+  """
+  return tf.reduce_sum(tf.abs(true - pred)) / tf.to_float(tf.size(pred))
+
+
+def huber_error(true, pred, delta=0.05):
+  err = true - pred 
+  herr = tf.where(tf.abs(err)<delta, 0.5*tf.square(err), delta*(tf.abs(err) - 0.5*delta)) # condition, true, false
+  return tf.reduce_sum(herr) / tf.to_float(tf.size(pred))
 
 def average_gradients(tower_grads):
   """Calculate the average gradient for each shared variable across all towers.
@@ -160,7 +185,7 @@ class Model(object):
     images = [tf.squeeze(img) for img in images]
 
     if reuse_scope is None:
-      gen_images, gen_states, shifted_masks, mask_lists, entropy_losses = construct_model(
+      gen_images, gen_states, shifted_masks, mask_lists, entropy_losses, gs_kernels = construct_model(
           images,
           actions,
           states,
@@ -171,10 +196,11 @@ class Model(object):
           cdna=FLAGS.model == 'CDNA',
           dna=FLAGS.model == 'DNA',
           stp=FLAGS.model == 'STP',
-          context_frames=FLAGS.context_frames)
+          context_frames=FLAGS.context_frames,
+          global_shift = FLAGS.global_shift)
     else:  # If it's a validation or test model.
       with tf.variable_scope(reuse_scope, reuse=True):
-        gen_images, gen_states, shifted_masks, mask_lists, entropy_losses = construct_model(
+        gen_images, gen_states, shifted_masks, mask_lists, entropy_losses, gs_kernels = construct_model(
             images,
             actions,
             states,
@@ -185,15 +211,17 @@ class Model(object):
             cdna=FLAGS.model == 'CDNA',
             dna=FLAGS.model == 'DNA',
             stp=FLAGS.model == 'STP',
-            context_frames=FLAGS.context_frames)
+            context_frames=FLAGS.context_frames,
+            global_shift = FLAGS.global_shift)
     
-    entropy_loss = tf.reduce_mean(entropy_losses[FLAGS.context_frames - 1:]) * 0.0#1e-2
+    entropy_loss = tf.reduce_mean(entropy_losses[FLAGS.context_frames - 1:]) * 0.0#1e-4
     # L2 loss, PSNR for eval.
     loss, psnr_all = 0.0, 0.0
-    for i, x, gx in zip(
+    for i, x, gx, shifted_mask in zip(
         range(len(gen_images)), images[FLAGS.context_frames:],
-        gen_images[FLAGS.context_frames - 1:]):
+        gen_images[FLAGS.context_frames - 1:], shifted_masks[FLAGS.context_frames - 1:]):
       recon_cost = mean_squared_error(x, gx)
+      #recon_cost = huber_error(x, gx)
       psnr_i = peak_signal_to_noise_ratio(x, gx)
       psnr_all += psnr_i
       summaries.append(
@@ -204,11 +232,12 @@ class Model(object):
       #self.orig_images.append(x[0])
       #self.gen_images.append(gx[0])
       loss += recon_cost
-    
+      
     self.orig_images = images[FLAGS.context_frames:]
     self.gen_images = gen_images[FLAGS.context_frames - 1:]
     self.shifted_masks = shifted_masks[FLAGS.context_frames - 1:]
     self.mask_lists = mask_lists[FLAGS.context_frames - 1:]
+    self.gs_kernels = gs_kernels[FLAGS.context_frames - 1:]
     
     for i, state, gen_state in zip(
         range(len(gen_states)), states[FLAGS.context_frames:],
@@ -316,14 +345,15 @@ def main(unused_argv):
                                       feed_dict)
     
       if (itr) % SAVE_INTERVAL == 2:
-        orig_images, gen_images, shifted_masks, mask_lists = sess.run([model.orig_images, 
+        orig_images, gen_images, shifted_masks, mask_lists, gs_kernels = sess.run([model.orig_images, 
                                                            model.gen_images, 
                                                            model.shifted_masks,
-                                                           model.mask_lists],
+                                                           model.mask_lists,
+                                                           model.gs_kernels],
                                                           feed_dict)
         tf.logging.info('Saving model.')
         saver.save(sess, FLAGS.output_dir + '/model' + str(itr))
-        plot_gif(orig_images, gen_images, shifted_masks, mask_lists, 
+        plot_gif(orig_images, gen_images, shifted_masks, mask_lists,
                  output_dir=FLAGS.output_dir, itr=itr)
   
       if (itr) % SUMMARY_INTERVAL:

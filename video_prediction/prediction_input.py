@@ -23,7 +23,7 @@ import tensorflow as tf
 from tensorflow.python.platform import flags
 from tensorflow.python.platform import gfile
 
-
+DATA_DIR = '/home/wangyang59/Data/robot/push/push_train'
 FLAGS = flags.FLAGS
 
 # Original image dimensions
