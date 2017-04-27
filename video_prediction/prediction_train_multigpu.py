@@ -34,7 +34,7 @@ SUMMARY_INTERVAL = 40
 VAL_INTERVAL = 200
 
 # How often to save a model checkpoint
-SAVE_INTERVAL = 2000
+SAVE_INTERVAL = 1000
 
 FLAGS = flags.FLAGS
 
@@ -185,7 +185,7 @@ class Model(object):
     images = [tf.squeeze(img) for img in images]
 
     if reuse_scope is None:
-      gen_images, gen_states, shifted_masks, mask_lists, entropy_losses, gs_kernels = construct_model(
+      gen_images, gen_states, shifted_masks, mask_lists, entropy_losses, poss_move_masks = construct_model(
           images,
           actions,
           states,
@@ -200,7 +200,7 @@ class Model(object):
           global_shift = FLAGS.global_shift)
     else:  # If it's a validation or test model.
       with tf.variable_scope(reuse_scope, reuse=True):
-        gen_images, gen_states, shifted_masks, mask_lists, entropy_losses, gs_kernels = construct_model(
+        gen_images, gen_states, shifted_masks, mask_lists, entropy_losses, poss_move_masks = construct_model(
             images,
             actions,
             states,
@@ -217,9 +217,9 @@ class Model(object):
     entropy_loss = tf.reduce_mean(entropy_losses[FLAGS.context_frames - 1:]) * 0.0#1e-4
     # L2 loss, PSNR for eval.
     loss, psnr_all = 0.0, 0.0
-    for i, x, gx, shifted_mask in zip(
+    for i, x, gx, poss_move_mask in zip(
         range(len(gen_images)), images[FLAGS.context_frames:],
-        gen_images[FLAGS.context_frames - 1:], shifted_masks[FLAGS.context_frames - 1:]):
+        gen_images[FLAGS.context_frames - 1:], poss_move_masks[FLAGS.context_frames - 1:]):
       recon_cost = mean_squared_error(x, gx)
       #recon_cost = huber_error(x, gx)
       psnr_i = peak_signal_to_noise_ratio(x, gx)
@@ -231,13 +231,14 @@ class Model(object):
       #summaries.append(tf.summary.image("orig_image" + str(i), x, max_outputs=1))
       #self.orig_images.append(x[0])
       #self.gen_images.append(gx[0])
-      loss += recon_cost
+      seg_loss = tf.reduce_sum(tf.square(poss_move_mask)) / tf.to_float(tf.size(poss_move_mask)) * 1e-4
+      loss += (recon_cost + seg_loss)
       
     self.orig_images = images[FLAGS.context_frames:]
     self.gen_images = gen_images[FLAGS.context_frames - 1:]
     self.shifted_masks = shifted_masks[FLAGS.context_frames - 1:]
     self.mask_lists = mask_lists[FLAGS.context_frames - 1:]
-    self.gs_kernels = gs_kernels[FLAGS.context_frames - 1:]
+    self.poss_move_masks = poss_move_masks[FLAGS.context_frames - 1:]
     
     for i, state, gen_state in zip(
         range(len(gen_states)), states[FLAGS.context_frames:],
@@ -345,15 +346,15 @@ def main(unused_argv):
                                       feed_dict)
     
       if (itr) % SAVE_INTERVAL == 2:
-        orig_images, gen_images, shifted_masks, mask_lists, gs_kernels = sess.run([model.orig_images, 
+        orig_images, gen_images, shifted_masks, mask_lists, poss_move_masks = sess.run([model.orig_images, 
                                                            model.gen_images, 
                                                            model.shifted_masks,
                                                            model.mask_lists,
-                                                           model.gs_kernels],
+                                                           model.poss_move_masks],
                                                           feed_dict)
         tf.logging.info('Saving model.')
         saver.save(sess, FLAGS.output_dir + '/model' + str(itr))
-        plot_gif(orig_images, gen_images, shifted_masks, mask_lists,
+        plot_gif(orig_images, gen_images, shifted_masks, mask_lists, poss_move_masks,
                  output_dir=FLAGS.output_dir, itr=itr)
   
       if (itr) % SUMMARY_INTERVAL:

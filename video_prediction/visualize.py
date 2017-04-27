@@ -14,12 +14,12 @@ def blow_up(kernel, size):
       img[i*block_h:(i+1)*block_h, j*block_w:(j+1)*block_w] = kernel[i, j]
   return img
 
-def merge(masks, orig_image, gen_image, shifted_mask, batch_num, gen_image_max):
+def merge(masks, orig_image, gen_image, shifted_mask, poss_move_mask, batch_num, gen_image_max):
   grey_cmap = plt.get_cmap("Greys")
   seis_cmap = plt.get_cmap("seismic")
   
   assert len(masks) == 26
-  figures = masks[2:14] + [masks[0]] + masks[14:26] + [masks[1]] + [shifted_mask, orig_image, gen_image]
+  figures = masks[2:14] + [masks[0]] + masks[14:26] + [masks[1]] + [shifted_mask, orig_image, gen_image, poss_move_mask]
   h = 6
   w = 5
   img_size = 64
@@ -38,15 +38,18 @@ def merge(masks, orig_image, gen_image, shifted_mask, batch_num, gen_image_max):
       tmp = figures[idx][batch_num] / gen_image_max
     #else:
     #  tmp = grey_cmap(blow_up(figures[idx][batch_num], img_size))[:, :, 0:3]
+    else:
+      tmp = grey_cmap(figures[idx][batch_num][:, :, 0])[:, :, 0:3]
     img[j*(img_size+gap):j*(img_size+gap)+img_size, i*(img_size+gap):i*(img_size+gap)+img_size, :] = \
         tmp * 255.0
   
   return img
 
-def plot_gif(orig_images, gen_images, shifted_masks, mask_lists, output_dir, itr):
+def plot_gif(orig_images, gen_images, shifted_masks, mask_lists, poss_move_masks, output_dir, itr):
   assert len(orig_images) == len(gen_images)
   assert len(orig_images) == len(shifted_masks)
   assert len(orig_images) == len(mask_lists)
+  assert len(orig_images) == len(poss_move_masks)
   
   batch_size = orig_images[0].shape[0]
   os.mkdir(os.path.join(output_dir, "itr_" + str(itr)))
@@ -59,7 +62,7 @@ def plot_gif(orig_images, gen_images, shifted_masks, mask_lists, output_dir, itr
     video = []
     for j in range(len(orig_images)):
       video.append(merge(mask_lists[j], orig_images[j], 
-                         gen_images[j], shifted_masks[j], i, gen_image_max))
+                         gen_images[j], shifted_masks[j], poss_move_masks[j], i, gen_image_max))
     clip = mpy.ImageSequenceClip(video, fps=2)
     clip.write_gif(os.path.join(output_dir, "itr_"+str(itr), "All_batch_" + str(i) + ".gif"),
                    verbose=False)
