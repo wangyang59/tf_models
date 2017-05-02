@@ -23,7 +23,8 @@ import tensorflow as tf
 from tensorflow.python.platform import flags
 from tensorflow.python.platform import gfile
 
-DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf/train'
+#DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf/train'
+DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf_stab/train'
 FLAGS = flags.FLAGS
 
 # Original image dimensions
@@ -39,7 +40,7 @@ IMG_HEIGHT = 64
 STATE_DIM = 5
 
 
-def build_tfrecord_input(training=True):
+def build_tfrecord_input(training=True, blacklist=[]):
   """Create input tfrecord tensors.
 
   Args:
@@ -52,6 +53,7 @@ def build_tfrecord_input(training=True):
     RuntimeError: if no files found.
   """
   filenames = gfile.Glob(os.path.join(FLAGS.data_dir, '*'))
+  filenames = filter(lambda x: x.split("/")[-1] not in blacklist, filenames)
   if not filenames:
     raise RuntimeError('No data files found.')
   index = int(np.floor(FLAGS.train_val_split * len(filenames)))

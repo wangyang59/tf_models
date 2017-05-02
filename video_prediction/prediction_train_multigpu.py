@@ -21,7 +21,7 @@ import tensorflow as tf
 from tensorflow.python.platform import app
 from tensorflow.python.platform import flags
 
-from prediction_input import build_tfrecord_input, DATA_DIR
+from prediction_input2 import build_tfrecord_input, DATA_DIR
 from prediction_model3 import construct_model
 from visualize import plot_gif
 
@@ -69,6 +69,15 @@ flags.DEFINE_float('learning_rate', 0.001,
 flags.DEFINE_integer('num_gpus', 1,
                    'the number of gpu to use')
 
+
+def get_black_list(clses):
+  blacklist = []
+  for cls in clses:
+    fname = "/home/wangyang59/Data/ILSVRC2016/ImageSets/VID/train_%s.txt" % cls
+    with open(fname) as f:
+      content = f.readlines()
+    blacklist += [x.split(" ")[0].split("/")[-1] + ".tfrecord" for x in content]
+  return blacklist
 
 ## Helper functions
 def peak_signal_to_noise_ratio(true, pred):
@@ -231,7 +240,7 @@ class Model(object):
       #summaries.append(tf.summary.image("orig_image" + str(i), x, max_outputs=1))
       #self.orig_images.append(x[0])
       #self.gen_images.append(gx[0])
-      seg_loss = tf.reduce_sum(tf.square(poss_move_mask)) / tf.to_float(tf.size(poss_move_mask)) * 1e-4
+      seg_loss = tf.reduce_sum(poss_move_mask) / tf.to_float(tf.size(poss_move_mask)) * 1e-4
       loss += (recon_cost + seg_loss)
       
     self.orig_images = images[FLAGS.context_frames:]
@@ -277,7 +286,8 @@ def main(unused_argv):
     tower_grads = []
     itr_placeholders = []
     
-    images, actions, states = build_tfrecord_input(training=True)
+    images, actions, states = build_tfrecord_input(training=True, 
+                                                   blacklist=get_black_list([1,4,6,7,19,26,27,28,29]))
     split_images = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=images)
     split_actions = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=actions)
     split_states = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=states)
