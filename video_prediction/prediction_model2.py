@@ -14,6 +14,7 @@
 # ==============================================================================
 
 """Model architecture for predictive model, including CDNA, DNA, and STP."""
+"""prediction_model + discretized kernel"""
 
 import numpy as np
 import tensorflow as tf

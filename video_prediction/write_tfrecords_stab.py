@@ -60,7 +60,7 @@ def convert_to(out_dir, video_dir):
 
 
 def main(unused_argv):
-  data_dir = '/home/wangyang59/Data/ILSVRC2016_stab/train/'
+  data_dir = '/home/wangyang59/Data/ILSVRC2016_stab/train2/'
   video_dirs = os.listdir(data_dir)
   
 #  convert_to("/home/wangyang59/Data/ILSVRC2016_tf_stab/train", os.path.join(data_dir, video_dirs[0]))  

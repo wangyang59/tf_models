@@ -23,8 +23,8 @@ import tensorflow as tf
 from tensorflow.python.platform import flags
 from tensorflow.python.platform import gfile
 
-#DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf/train'
-DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf_stab/train'
+DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf/train'
+#DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf_stab/train'
 FLAGS = flags.FLAGS
 
 # Original image dimensions
@@ -93,7 +93,7 @@ def build_tfrecord_input(training=True, blacklist=[]):
   image_batch = tf.train.shuffle_batch(
     [image_seq],
     FLAGS.batch_size,
-    num_threads=FLAGS.batch_size,
+    num_threads=FLAGS.batch_size * 2,
     capacity=100 * FLAGS.batch_size,
     min_after_dequeue=1600)
   zeros_batch = tf.zeros([FLAGS.batch_size, FLAGS.sequence_length, STATE_DIM])

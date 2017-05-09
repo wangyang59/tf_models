@@ -96,17 +96,20 @@ def construct_model(images,
         [lstm_func, slim.layers.conv2d, slim.layers.fully_connected,
          tf_layers.layer_norm, slim.layers.conv2d_transpose],
         reuse=reuse):
-
-      if feedself and done_warm_start:
-        # Feed in generated image.
-        prev_image = gen_images[-1]
-      elif done_warm_start:
-        # Scheduled sampling
-        prev_image = scheduled_sample(image, gen_images[-1], batch_size,
-                                      num_ground_truth)
-      else:
-        # Always feed in ground_truth
+      
+      if k == 0:
         prev_image = image
+      else:
+        if feedself and done_warm_start:
+          # Feed in generated image.
+          prev_image = gen_images[-1]
+        elif done_warm_start:
+          # Scheduled sampling
+          prev_image = scheduled_sample(image, gen_images[-1], batch_size,
+                                        num_ground_truth)
+        else:
+          # Always feed in ground_truth
+          prev_image = image
 
       # Predicted state is always fed back in
       state_action = tf.concat(axis=1, values=[action, current_state])
@@ -236,7 +239,8 @@ def stp_transformation(prev_image, stp_input, num_masks):
   """
   # Only import spatial transformer if needed.
   from spatial_transformer import transformer
-
+  
+  img_height, img_width = prev_image.get_shape()[1:3]
   identity_params = tf.convert_to_tensor(
       np.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0], np.float32))
   transformed = []
@@ -244,7 +248,7 @@ def stp_transformation(prev_image, stp_input, num_masks):
     params = slim.layers.fully_connected(
         stp_input, 6, scope='stp_params' + str(i),
         activation_fn=None) + identity_params
-    transformed.append(transformer(prev_image, params))
+    transformed.append(transformer(prev_image, params, (int(img_height), int(img_width))))
 
   return transformed
 

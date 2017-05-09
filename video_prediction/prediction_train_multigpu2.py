@@ -226,12 +226,13 @@ class Model(object):
     entropy_loss = tf.reduce_mean(entropy_losses[FLAGS.context_frames - 1:]) * 0.0#1e-4
     # L2 loss, PSNR for eval.
     loss, psnr_all = 0.0, 0.0
-    for i, x, gx, poss_move_mask in zip(
+    for i, x, gx, poss_move_mask, shift_mask in zip(
         range(len(gen_images)), images[FLAGS.context_frames:],
-        gen_images[FLAGS.context_frames - 1:], poss_move_masks[FLAGS.context_frames - 1:]):
-      recon_cost = mean_squared_error(x, gx)
+        gen_images[FLAGS.context_frames - 1:], poss_move_masks[FLAGS.context_frames - 1:],
+        shifted_masks[FLAGS.context_frames - 1:]):
+      recon_cost = mean_squared_error(x*shift_mask, gx)
       #recon_cost = huber_error(x, gx)
-      psnr_i = peak_signal_to_noise_ratio(x, gx)
+      psnr_i = peak_signal_to_noise_ratio(x*shift_mask, gx)
       psnr_all += psnr_i
       summaries.append(
           tf.summary.scalar(prefix + '_recon_cost' + str(i), recon_cost))
@@ -240,7 +241,7 @@ class Model(object):
       #summaries.append(tf.summary.image("orig_image" + str(i), x, max_outputs=1))
       #self.orig_images.append(x[0])
       #self.gen_images.append(gx[0])
-      seg_loss = tf.reduce_sum(poss_move_mask) / tf.to_float(tf.size(poss_move_mask)) * 1e-4
+      seg_loss = tf.reduce_sum(1.0 - shift_mask) / tf.to_float(tf.size(shift_mask)) * 1e-3
       loss += (recon_cost + seg_loss)
       
     self.orig_images = images[FLAGS.context_frames:]
@@ -365,6 +366,7 @@ def main(unused_argv):
                                                           feed_dict)
         tf.logging.info('Saving model.')
         saver.save(sess, FLAGS.output_dir + '/model' + str(itr))
+        mask_lists = [[np.zeros((32, 64, 64, 1)) for jj in range(26)] for ii in range(8)]
         plot_gif(orig_images, gen_images, shifted_masks, mask_lists, poss_move_masks,
                  output_dir=FLAGS.output_dir, itr=itr)
   
