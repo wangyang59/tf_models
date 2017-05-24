@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
+from tensorflow.examples.tutorials.mnist.mnist import loss
 
 """Code for training the prediction model."""
 
@@ -21,9 +22,9 @@ import tensorflow as tf
 from tensorflow.python.platform import app
 from tensorflow.python.platform import flags
 
-from prediction_input2 import build_tfrecord_input, DATA_DIR
-from prediction_model6 import construct_model
-from visualize import plot_gif
+from prediction_input_flo_res256 import build_tfrecord_input, DATA_DIR
+from prediction_model_flo_res256 import construct_model
+from visualize import plot_flo
 
 import os
 
@@ -44,22 +45,7 @@ flags.DEFINE_integer('num_iterations', 100000, 'number of training iterations.')
 flags.DEFINE_string('pretrained_model', '',
                     'filepath of a pretrained model to initialize from.')
 
-flags.DEFINE_integer('sequence_length', 10,
-                     'sequence length, including context frames.')
-flags.DEFINE_integer('context_frames', 2, '# of frames before predictions.')
-flags.DEFINE_integer('use_state', 1,
-                     'Whether or not to give the state+action to the model')
-flags.DEFINE_integer('global_shift', 0,
-                     'Whether or not to do the global shift of the entire image')
-flags.DEFINE_string('model', 'CDNA',
-                    'model architecture to use - CDNA, DNA, or STP')
-
-flags.DEFINE_integer('num_masks', 26,
-                     'number of masks, usually 1 for DNA, 10 for CDNA, STN.')
-flags.DEFINE_float('schedsamp_k', 900.0,
-                   'The k hyperparameter for scheduled sampling,'
-                   '-1 for no scheduled sampling.')
-flags.DEFINE_float('train_val_split', 0.95,
+flags.DEFINE_float('train_val_split', 1.0,
                    'The percentage of files to use for the training set,'
                    ' vs. the validation set.')
 
@@ -125,11 +111,37 @@ def mean_L1_error(true, pred):
   """
   return tf.reduce_sum(tf.abs(true - pred)) / tf.to_float(tf.size(pred))
 
+def weighted_mean_L1_error(true, pred, weight):
+  """L2 distance between tensors true and pred.
+
+  Args:
+    true: the ground truth image.
+    pred: the predicted image.
+  Returns:
+    mean squared error between ground truth and predicted image.
+  """
+  return tf.reduce_sum(tf.abs(true - pred)*weight) / tf.to_float(tf.size(pred))
+
 def huber_error(true, pred, delta=0.05):
   err = true - pred 
   herr = tf.where(tf.abs(err)<delta, 0.5*tf.square(err), delta*(tf.abs(err) - 0.5*delta)) # condition, true, false
   return tf.reduce_sum(herr) / tf.to_float(tf.size(pred))
 
+def cal_grad_error_wmask(image, mask, kernels):
+  """Calculate the gradient of the given image by calculate the difference between nearby pixels
+  """
+  error = 0.0
+  img_height, img_width, color_channels = map(int, image.get_shape()[1:4])
+  
+  cropped_image = image[:, 1:(img_height-1), 1:(img_width-1), :]
+  cropped_mask = mask[:, 1:(img_height-1), 1:(img_width-1), :]
+  for kernel in kernels:
+    shifted_image = tf.nn.depthwise_conv2d(image, tf.tile(kernel, [1, 1, color_channels, 1]), 
+                                           [1, 1, 1, 1], 'SAME')
+    error += weighted_mean_squared_error(cropped_image, shifted_image[:, 1:(img_height-1), 1:(img_width-1), :], cropped_mask)
+    
+  return error / len(kernels)
+  
 def cal_grad_error(image, kernels):
   """Calculate the gradient of the given image by calculate the difference between nearby pixels
   """
@@ -142,8 +154,16 @@ def cal_grad_error(image, kernels):
     error += mean_L1_error(cropped_image, shifted_image[:, 1:(img_height-1), 1:(img_width-1), :])
     
   return error / len(kernels)
+
+def cal_weighted_var(image, mask):
   
+  weighted_mean = tf.reduce_sum(image*mask, axis=[1, 2], keep_dims=True) / tf.reduce_sum(mask, axis=[1, 2], keep_dims=True)
+  #mean = tf.reduce_mean(image, axis=[1, 2], keep_dims=True)
+  weighted_var = (tf.reduce_sum(mask*tf.square(image - weighted_mean), axis=[1,2], keep_dims=True) + 0.01) / tf.reduce_sum(mask, axis=[1, 2], keep_dims=True)
+  #var = tf.reduce_mean(tf.square(image - mean), axis=[1,2], keep_dims=True)
+  #print(weighted_var.get_shape())
   
+  return tf.reduce_mean(weighted_var)
   
 def average_gradients(tower_grads):
   """Calculate the average gradient for each shared variable across all towers.
@@ -185,15 +205,12 @@ def average_gradients(tower_grads):
 class Model(object):
 
   def __init__(self,
-               images=None,
-               actions=None,
-               states=None,
-               sequence_length=None,
-               reuse_scope=None,
+               image1=None,
+               image2=None,
+               flo=None,
+               reuse_scope=False,
+               scope=None,
                prefix="train"):
-
-    if sequence_length is None:
-      sequence_length = FLAGS.sequence_length
 
     #self.prefix = prefix = tf.placeholder(tf.string, [])
     self.iter_num = tf.placeholder(tf.float32, [])
@@ -208,97 +225,39 @@ class Model(object):
                            name='kernel_shift'+str(i), verify_shape=True)
       self.kernels.append(kernel)
     
-    # Split into timesteps.
-    actions = tf.split(axis=1, num_or_size_splits=int(actions.get_shape()[1]), value=actions)
-    actions = [tf.squeeze(act) for act in actions]
-    states = tf.split(axis=1, num_or_size_splits=int(states.get_shape()[1]), value=states)
-    states = [tf.squeeze(st) for st in states]
-    images = tf.split(axis=1, num_or_size_splits=int(images.get_shape()[1]), value=images)
-    images = [tf.squeeze(img) for img in images]
     
-    if reuse_scope is None:
-      gen_images, gen_states, shifted_masks, mask_lists, entropy_losses, poss_move_masks = construct_model(
-          images,
-          actions,
-          states,
-          iter_num=self.iter_num,
-          k=FLAGS.schedsamp_k,
-          use_state=FLAGS.use_state,
-          num_masks=FLAGS.num_masks,
-          cdna=FLAGS.model == 'CDNA',
-          dna=FLAGS.model == 'DNA',
-          stp=FLAGS.model == 'STP',
-          context_frames=FLAGS.context_frames,
-          global_shift = FLAGS.global_shift)
+    if not reuse_scope:
+      poss_move_mask1, bg_mask1 = construct_model(image1)
     else:  # If it's a validation or test model.
-      with tf.variable_scope(reuse_scope, reuse=True):
-        gen_images, gen_states, shifted_masks, mask_lists, entropy_losses, poss_move_masks = construct_model(
-            images,
-            actions,
-            states,
-            iter_num=self.iter_num,
-            k=FLAGS.schedsamp_k,
-            use_state=FLAGS.use_state,
-            num_masks=FLAGS.num_masks,
-            cdna=FLAGS.model == 'CDNA',
-            dna=FLAGS.model == 'DNA',
-            stp=FLAGS.model == 'STP',
-            context_frames=FLAGS.context_frames,
-            global_shift = FLAGS.global_shift)
+      with tf.variable_scope(scope, reuse=True):
+        poss_move_mask1, bg_mask1 = construct_model(image1)
     
-    entropy_loss = tf.reduce_mean(entropy_losses[FLAGS.context_frames - 1:]) * 0.0#1e-4
+    with tf.variable_scope(scope, reuse=True):
+      poss_move_mask2, bg_mask2 = construct_model(image2)
+    
+    batch_size, img_height, img_width = map(int, image1.get_shape()[0:3])
+    
     # L2 loss, PSNR for eval.
-    loss, psnr_all = 0.0, 0.0
-    for i, x, gx, poss_move_mask, shift_mask in zip(
-        range(len(gen_images)), images[FLAGS.context_frames:],
-        gen_images[FLAGS.context_frames - 1:], poss_move_masks[FLAGS.context_frames - 1:],
-        shifted_masks[FLAGS.context_frames - 1:]):
-      recon_cost = mean_squared_error(x, gx)
-#       recon_cost += mean_squared_error(tf.image.resize_bilinear(x*shift_mask, [img_height/2, img_width/2]), 
-#                                        tf.image.resize_bilinear(gx, [img_height/2, img_width/2]))
-#       recon_cost += mean_squared_error(tf.image.resize_bilinear(x*shift_mask, [img_height/4, img_width/4]), 
-#                                        tf.image.resize_bilinear(gx, [img_height/4, img_width/4]))
-#       
-#       recon_cost = recon_cost / 3.0
-      #recon_cost = huber_error(x, gx)
-      psnr_i = peak_signal_to_noise_ratio(x, gx)
-      psnr_all += psnr_i
-      summaries.append(
-          tf.summary.scalar(prefix + '_recon_cost' + str(i), recon_cost))
-      summaries.append(tf.summary.scalar(prefix + '_psnr' + str(i), psnr_i))
-      #summaries.append(tf.summary.image("gen_image" + str(i), gx, max_outputs=1))
-      #summaries.append(tf.summary.image("orig_image" + str(i), x, max_outputs=1))
-      #self.orig_images.append(x[0])
-      #self.gen_images.append(gx[0])
-      #seg_loss = tf.reduce_sum(1.0 - shift_mask) / tf.to_float(tf.size(shift_mask)) * 1e-3
-      seg_loss = tf.reduce_sum(poss_move_mask) / tf.to_float(tf.size(poss_move_mask)) * 1e-4
-      #grad_loss = cal_grad_error(poss_move_mask, self.kernels) * 1e-5
-      loss += (recon_cost + seg_loss)
-      
-    self.orig_images = images[FLAGS.context_frames:]
-    self.gen_images = gen_images[FLAGS.context_frames - 1:]
-    self.shifted_masks = shifted_masks[FLAGS.context_frames - 1:]
-    self.mask_lists = mask_lists[FLAGS.context_frames - 1:]
-    self.poss_move_masks = poss_move_masks[FLAGS.context_frames - 1:]
+    grad_loss = cal_grad_error_wmask(flo, bg_mask1, self.kernels) * 4.0
+    #loss_mask_grad = cal_grad_error(1.0-poss_move_mask, self.kernels) * 1e-5
+    var_loss = cal_weighted_var(flo, bg_mask1)
+    #seg_loss = tf.reduce_sum(poss_move_mask) / tf.to_float(tf.size(poss_move_mask)) * 3.0
+    #seg_loss = tf.reduce_sum(tf.square(poss_move_mask)) / tf.to_float(tf.size(poss_move_mask)) * 2.0
+    seg_loss = tf.reduce_sum(tf.square(tf.reduce_sum(poss_move_mask1, axis=[1,2], keep_dims=True))) / tf.to_float(batch_size*img_height*img_height*img_width*img_width) * 4.0
+    #summaries.append(tf.summary.scalar(prefix + '_loss_grad', loss_grad))
+    #summaries.append(tf.summary.scalar(prefix + '_loss_mask_grad', loss_mask_grad))
+    summaries.append(tf.summary.scalar(prefix + '_loss_var', var_loss))
+    summaries.append(tf.summary.scalar(prefix + '_loss_seg', seg_loss))
+    summaries.append(tf.summary.scalar(prefix + '_loss_grad', grad_loss))
     
-    for i, state, gen_state in zip(
-        range(len(gen_states)), states[FLAGS.context_frames:],
-        gen_states[FLAGS.context_frames - 1:]):
-      state_cost = mean_squared_error(state, gen_state) * 1e-4
-      summaries.append(
-          tf.summary.scalar(prefix + '_state_cost' + str(i), state_cost))
-      loss += state_cost
-    summaries.append(tf.summary.scalar(prefix + '_psnr_all', psnr_all))
-    self.psnr_all = psnr_all
+    self.loss = var_loss + seg_loss + grad_loss
+    self.orig_image1 = image1
+    self.orig_image2 = image2
+    self.flo = flo
+    self.poss_move_mask1 = poss_move_mask1
+    self.poss_move_mask2 = poss_move_mask2
     
-    summaries.append(tf.summary.scalar(prefix + '_entropy_loss', entropy_loss))
-
-    loss = loss / np.float32(len(images) - FLAGS.context_frames)
-
-    summaries.append(tf.summary.scalar(prefix + '_loss', loss))
-    
-    self.loss = loss + entropy_loss
-    summaries.append(tf.summary.scalar(prefix + '_loss_with_entropy', self.loss))
+    summaries.append(tf.summary.scalar(prefix + '_loss', self.loss))
     
     self.summ_op = tf.summary.merge(summaries)
     
@@ -317,12 +276,12 @@ def main(unused_argv):
     tower_grads = []
     itr_placeholders = []
     
-    images, actions, states = build_tfrecord_input(training=True) 
-                                                   #blacklist=get_black_list([1,4,6,7,19,26,27,28,29]))
-    split_images = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=images)
-    split_actions = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=actions)
-    split_states = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=states)
+    image, image2, flo= build_tfrecord_input(training=True)
     
+    split_image = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=image)
+    split_image2 = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=image2)
+    split_flo = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=flo)
+
     summaries_cpu = tf.get_collection(tf.GraphKeys.SUMMARIES, tf.get_variable_scope().name)
     
     with tf.variable_scope(tf.get_variable_scope()) as vs:
@@ -334,9 +293,9 @@ def main(unused_argv):
             scopename = '%s_%d' % ("tower", i)
           with tf.name_scope(scopename) as ns:
             if i == 0:
-              model = Model(split_images[i], split_actions[i], split_states[i], FLAGS.sequence_length)
+              model = Model(split_image[i], split_image2[i], split_flo[i], reuse_scope=False, scope=vs)
             else:
-              model = Model(split_images[i], split_actions[i], split_states[i], FLAGS.sequence_length, vs)
+              model = Model(split_image[i], split_image2[i], split_flo[i], reuse_scope=True, scope=vs)
             
             loss = model.loss
             # Retain the summaries from the final tower.
@@ -389,16 +348,15 @@ def main(unused_argv):
                                       feed_dict)
     
       if (itr) % SAVE_INTERVAL == 2:
-        orig_images, gen_images, shifted_masks, mask_lists, poss_move_masks = sess.run([model.orig_images, 
-                                                           model.gen_images, 
-                                                           model.shifted_masks,
-                                                           model.mask_lists,
-                                                           model.poss_move_masks],
-                                                          feed_dict)
+        orig_image1, orig_image2, flo, poss_move_mask1, poss_move_mask2 = sess.run([model.orig_image1, 
+                                                    model.orig_image2,
+                                                    model.flo, 
+                                                    model.poss_move_mask1,
+                                                    model.poss_move_mask2],
+                                                    feed_dict)
         tf.logging.info('Saving model.')
         saver.save(sess, FLAGS.output_dir + '/model' + str(itr))
-        mask_lists = [mask_list + [np.zeros((32, 64, 64, 1)) for jj in range(16)] for mask_list in mask_lists]
-        plot_gif(orig_images, gen_images, shifted_masks, mask_lists, poss_move_masks,
+        plot_flo(orig_image1, orig_image2, flo, poss_move_mask1, poss_move_mask2,
                  output_dir=FLAGS.output_dir, itr=itr)
   
       if (itr) % SUMMARY_INTERVAL:

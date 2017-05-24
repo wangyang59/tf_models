@@ -14,7 +14,7 @@
 # ==============================================================================
 
 """Model architecture for predictive model, including CDNA, DNA, and STP."""
-"""prediction_model3 + normalized total masks/bg_only"""
+"""prediction_model3 + fg/bg all stp motions"""
 
 import numpy as np
 import tensorflow as tf
@@ -189,50 +189,50 @@ def construct_model(images,
       hidden5, lstm_state5 = lstm_func(
           enc3, lstm_state5, lstm_size[4], scope='state5')  # last 8x8
       hidden5 = tf_layers.layer_norm(hidden5, scope='layer_norm6')
-#       enc4 = slim.layers.conv2d_transpose(
-#           hidden5, hidden5.get_shape()[3], 4, stride=2, scope='convt1')
-# 
-#       hidden6, lstm_state6 = lstm_func(
-#           enc4, lstm_state6, lstm_size[5], scope='state6')  # 16x16
-#       hidden6 = tf_layers.layer_norm(hidden6, scope='layer_norm7')
-#       # Skip connection.
-#       hidden6 = tf.concat(axis=3, values=[hidden6, enc1])  # both 16x16
-# 
-#       enc5 = slim.layers.conv2d_transpose(
-#           hidden6, hidden6.get_shape()[3], 4, stride=2, scope='convt2')
-#       hidden7, lstm_state7 = lstm_func(
-#           enc5, lstm_state7, lstm_size[6], scope='state7')  # 32x32
-#       hidden7 = tf_layers.layer_norm(hidden7, scope='layer_norm8')
-
+      enc4 = slim.layers.conv2d_transpose(
+          hidden5, hidden5.get_shape()[3], 4, stride=2, scope='convt1')
+ 
+      hidden6, lstm_state6 = lstm_func(
+          enc4, lstm_state6, lstm_size[5], scope='state6')  # 16x16
+      hidden6 = tf_layers.layer_norm(hidden6, scope='layer_norm7')
       # Skip connection.
-#       hidden7 = tf.concat(axis=3, values=[hidden7, enc0])  # both 32x32
-
-#       enc6 = slim.layers.conv2d_transpose(
-#           hidden7,
-#           hidden7.get_shape()[3], 4, stride=2, scope='convt3',
-#           normalizer_fn=tf_layers.layer_norm,
-#           normalizer_params={'scope': 'layer_norm9'})
-
-
+      hidden6 = tf.concat(axis=3, values=[hidden6, enc1])  # both 16x16
+ 
+      enc5 = slim.layers.conv2d_transpose(
+          hidden6, hidden6.get_shape()[3], 4, stride=2, scope='convt2')
+      hidden7, lstm_state7 = lstm_func(
+          enc5, lstm_state7, lstm_size[6], scope='state7')  # 32x32
+      hidden7 = tf_layers.layer_norm(hidden7, scope='layer_norm8')
+  
+      # Skip connection.
+      hidden7 = tf.concat(axis=3, values=[hidden7, enc0])  # both 32x32
+   
+      enc6 = slim.layers.conv2d_transpose(
+          hidden7,
+          hidden7.get_shape()[3], 4, stride=2, scope='convt3',
+          normalizer_fn=tf_layers.layer_norm,
+          normalizer_params={'scope': 'layer_norm9'})
+  
+  
       # Using largest hidden state for predicting a new image layer.
-#       enc7 = slim.layers.conv2d_transpose(
-#           enc6, color_channels, 1, stride=1, scope='convt4')
-#       # This allows the network to also generate one image from scratch,
-#       # which is useful when regions of the image become unoccluded.
-#       guessed = tf.nn.sigmoid(enc7)
+      enc7 = slim.layers.conv2d_transpose(
+          enc6, color_channels, 1, stride=1, scope='convt4')
+      # This allows the network to also generate one image from scratch,
+      # which is useful when regions of the image become unoccluded.
+      guessed = tf.nn.sigmoid(enc7)
       
       stp_input0 = tf.reshape(hidden5, [int(batch_size), -1])
       stp_input1 = slim.layers.fully_connected(stp_input0, 100, scope='fc_stp')        
         
-#       masks = slim.layers.conv2d_transpose(
-#           enc6, num_masks, 1, stride=1, scope='convt7')
-#       masks_probs = tf.nn.softmax(tf.reshape(masks, [-1, num_masks]))
+      masks = slim.layers.conv2d_transpose(
+          enc6, num_masks, 1, stride=1, scope='convt7')
+      masks_probs = tf.nn.softmax(tf.reshape(masks, [-1, num_masks]))
 #       entropy_losses.append(tf.reduce_mean(-tf.reduce_sum(masks_probs * tf.log(masks_probs + 1e-10), [1])))
-#       masks = tf.reshape(
-#           masks_probs,
-#           #gumbel_softmax(tf.reshape(masks, [-1, num_masks]), TEMP, hard=False),
-#           [int(batch_size), int(img_height), int(img_width), num_masks])
-#       mask_list = tf.split(axis=3, num_or_size_splits=num_masks, value=masks)
+      masks = tf.reshape(
+          masks_probs,
+          #gumbel_softmax(tf.reshape(masks, [-1, num_masks]), TEMP, hard=False),
+          [int(batch_size), int(img_height), int(img_width), num_masks])
+      mask_list = tf.split(axis=3, num_or_size_splits=num_masks, value=masks)
 
       #############################
 
@@ -339,10 +339,10 @@ def construct_model(images,
       poss_move_masks.append(poss_move_mask)
       
       #############################
-      #mask_list = mask_list[0:2] + [mask * poss_move_mask for mask in mask_list[2:]]
-      #mask_lists.append(mask_list)
+      #mask_list = [mask * poss_move_mask for mask in mask_list]
+      mask_lists.append(mask_list)
 
-      output, shifted_mask = my_transformation2(prev_image, int(color_channels), poss_move_mask, bg_mask, stp_input1)
+      output, shifted_mask = my_transformation2(prev_image, mask_list, int(color_channels), poss_move_mask, bg_mask, stp_input1, guessed)
         
       gen_images.append(output)
       shifted_masks.append(shifted_mask)
@@ -358,7 +358,7 @@ def construct_model(images,
 
 
 ## Utility functions
-def stp_transformation(prev_image, bg_mask, stp_input):
+def stp_transformation(prev_image, mask, stp_input, idx, zero_init):
   """Apply spatial transformer predictor (STP) to previous image.
 
   Args:
@@ -375,76 +375,32 @@ def stp_transformation(prev_image, bg_mask, stp_input):
 
   identity_params = tf.convert_to_tensor(
       np.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0], np.float32))
+  
+  if zero_init:
+    params = slim.layers.fully_connected(
+        stp_input, 6, scope='stp_params' + str(idx),
+        activation_fn=None, weights_initializer=init_ops.zeros_initializer()) + identity_params
+  else:
+    params = slim.layers.fully_connected(
+        stp_input, 6, scope='stp_params' + str(idx),
+        activation_fn=None) + identity_params
+  
+  return transformer(prev_image, params, (int(img_height), int(img_width))), transformer(mask, params, (int(img_height), int(img_width)))
 
-  params = slim.layers.fully_connected(
-      stp_input, 6, scope='stp_params',
-      activation_fn=None, weights_initializer=init_ops.zeros_initializer()) + identity_params
-  
-  return transformer(prev_image, params, (int(img_height), int(img_width))), transformer(bg_mask, params, (int(img_height), int(img_width)))
 
-# def do_global_shift(prev_image, cdna_input, color_channels):
-#   batch_size = int(cdna_input.get_shape()[0])
-# 
-#   # Predict kernels using linear function of last hidden layer.
-#   cdna_kerns = slim.layers.fully_connected(
-#       cdna_input,
-#       DNA_KERN_SIZE * DNA_KERN_SIZE,
-#       scope='global_shift_params',
-#       activation_fn=None)
-# 
-#   # Reshape and normalize.
-#   cdna_kerns = tf.reshape(
-#       cdna_kerns, [batch_size, DNA_KERN_SIZE, DNA_KERN_SIZE, 1, 1])
-#   cdna_kerns = tf.nn.relu(cdna_kerns - RELU_SHIFT) + RELU_SHIFT
-#   norm_factor = tf.reduce_sum(cdna_kerns, [1, 2, 3], keep_dims=True)
-#   cdna_kerns /= norm_factor
-#   cdna_kerns_output = cdna_kerns
-# 
-#   cdna_kerns = tf.tile(cdna_kerns, [1, 1, 1, color_channels, 1])
-#   cdna_kerns = tf.split(axis=0, num_or_size_splits=batch_size, value=cdna_kerns)
-#   prev_images = tf.split(axis=0, num_or_size_splits=batch_size, value=prev_image)
-# 
-#   # Transform image.
-#   transformed = []
-#   for kernel, preimg in zip(cdna_kerns, prev_images):
-#     kernel = tf.squeeze(kernel)
-#     if len(kernel.get_shape()) == 3:
-#       kernel = tf.expand_dims(kernel, -1)
-#     transformed.append(
-#         tf.nn.depthwise_conv2d(preimg, kernel, [1, 1, 1, 1], 'SAME'))
-#   transformed = tf.concat(axis=0, values=transformed)
-#   return transformed, tf.squeeze(cdna_kerns_output)
-
-def my_transformation2(prev_image, color_channels, fg_mask, bg_mask, stp_input):
-#   kernels = []
-#   for i in xrange(DNA_KERN_SIZE * DNA_KERN_SIZE):
-#     if i != DNA_KERN_SIZE * DNA_KERN_SIZE / 2:
-#       kernel = np.zeros((DNA_KERN_SIZE * DNA_KERN_SIZE), dtype=np.float32)
-#       kernel[i] = 1.0
-#       kernel = kernel.reshape((DNA_KERN_SIZE, DNA_KERN_SIZE, 1, 1))
-#       kernel = tf.constant(kernel, shape=(DNA_KERN_SIZE, DNA_KERN_SIZE, 1, 1), 
-#                            name='kernel'+str(i), verify_shape=True)
-#       kernels.append(kernel)
-#   
-#   assert len(kernels) == len(mask_list) - 2
+def my_transformation2(prev_image, mask_list, color_channels, fg_mask, bg_mask, stp_input, guessed):
+  for i, mask in enumerate(mask_list):
+    if i == 0:
+      image, mask = stp_transformation(prev_image, mask, stp_input, i, True)
+      output = image*mask
+      shifted_mask = mask
+    else:
+      image, mask = stp_transformation(prev_image, mask, stp_input, i, False)
+      output += image*mask
+      shifted_mask += mask
   
-  # mask[0] indicates stay, mask[1] indicates disappear
-#   fg_image = prev_image * fg_mask
-  bg_image = prev_image * bg_mask
-  
-  bg_image, bg_mask = stp_transformation(bg_image, bg_mask, stp_input)
-  
-#   output = bg_image + fg_image * mask_list[0]
-#   shifted_mask = bg_mask + fg_mask*mask_list[0] + fg_mask*mask_list[1]
-#   for kernel, mask in zip(kernels, mask_list[2:]):
-#     tmp_mask = tf.nn.depthwise_conv2d(mask, kernel, [1, 1, 1, 1], 'SAME')
-#     output += tmp_mask * tf.nn.depthwise_conv2d(fg_image, tf.tile(kernel, [1, 1, color_channels, 1]), 
-#                                      [1, 1, 1, 1], 'SAME')
-#     shifted_mask += fg_mask*tmp_mask
-#   
-#   output += guessed * tf.nn.relu(1.0 - shifted_mask)
-#  return output, shifted_mask
-  return bg_image, bg_mask
+  output += guessed * tf.nn.relu(1.0 - shifted_mask)
+  return output, shifted_mask
 
 
 def scheduled_sample(ground_truth_x, generated_x, batch_size, num_ground_truth):

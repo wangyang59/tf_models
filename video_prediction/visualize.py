@@ -3,6 +3,8 @@ import os
 import cPickle
 import numpy as np
 import matplotlib.pyplot as plt
+from flowlib import flow_to_image
+from PIL import Image
 
 def blow_up(kernel, size):
   kernel_h, kernel_w = kernel.shape
@@ -66,37 +68,48 @@ def plot_gif(orig_images, gen_images, shifted_masks, mask_lists, poss_move_masks
     clip = mpy.ImageSequenceClip(video, fps=2)
     clip.write_gif(os.path.join(output_dir, "itr_"+str(itr), "All_batch_" + str(i) + ".gif"),
                    verbose=False)
-#     clip = mpy.ImageSequenceClip([x[i]*255.0 for x in orig_images], fps=5)
-#     clip.write_gif(os.path.join(output_dir, "itr_"+str(itr), "orig_images_batch_" + str(i) + ".gif"),
-#                    verbose=False)
-#     
-#     clip = mpy.ImageSequenceClip([x[i]/gen_image_max*255.0 for x in gen_images], fps=5)
-#     clip.write_gif(os.path.join(output_dir, "itr_"+str(itr), "gen_images_batch_" + str(i)) + ".gif",
-#                    verbose=False)
-#     
-#     clip = mpy.ImageSequenceClip([(cmap(x[i]))[:, :, 0, 0:3]*255.0 for x in shifted_masks], fps=5)
-#     clip.write_gif(os.path.join(output_dir, "itr_"+str(itr), "masks_batch_" + str(i)) + ".gif",
-#                    verbose=False)
     
   with open(os.path.join(output_dir, "itr_"+str(itr), "shifted_mask.pickle"), "wb") as f:
     cPickle.dump(shifted_masks, f)
+
+def plot_flo(image1, image2, flo, poss_move_mask1, poss_move_mask2, output_dir, itr):
+  grey_cmap = plt.get_cmap("Greys")
+  batch_size = image1.shape[0]
+
+  h = 2
+  w = 3
+  img_size = image1.shape[1]
+  gap = 3
   
-#   with open(os.path.join(output_dir, "itr_"+str(itr), "mask_lists.pickle"), "wb") as f:
-#     cPickle.dump(mask_lists, f)
+  if not os.path.exists(os.path.join(output_dir, "itr_"+str(itr))):
+    os.makedirs(os.path.join(output_dir, "itr_"+str(itr)))
+  
+  for cnt in range(batch_size):
+    img = np.zeros((h * (img_size + gap), w * (img_size + gap), 3))
+    for idx in xrange(5):
+      i = idx % w
+      j = idx // w
+      
+      if idx == 0:
+        tmp = image1[cnt] * 255.0
+      elif idx == 1:
+        tmp = image2[cnt] * 255.0
+      elif idx == 2:
+        tmp = flow_to_image(flo[cnt])
+      elif idx == 3:
+        tmp = grey_cmap(poss_move_mask1[cnt, :, :, 0])[:, :, 0:3] * 255.0
+      else:
+        tmp = grey_cmap(poss_move_mask2[cnt, :, :, 0])[:, :, 0:3] * 255.0
+      
+      img[j*(img_size+gap):j*(img_size+gap)+img_size, i*(img_size+gap):i*(img_size+gap)+img_size, :] = \
+          tmp
     
-def npy_to_gif(npy, filename):
-    clip = mpy.ImageSequenceClip([x*255.0 for x in npy], fps=10)
-    clip.write_gif(filename)
-    
+    im = Image.fromarray(img.astype('uint8'))
+
+    im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + ".jpeg"))
+  #return img
+
 def main():
-#   video = []
-#   for i in range(8):
-#     image = np.ones(shape=[64, 64, 1], dtype=np.float32)
-#     image = image * 1.0
-#     image[i*8, i*8, 0] = 0.8
-#     video.append(image)
-#   clip = mpy.ImageSequenceClip([x * 255.0 for x in video], fps=5)
-#   clip.write_gif("./test.gif", verbose=False)
   def merge(masks, batch_num, cmap):
     assert len(masks) == 26
     masks = masks[2:14] + [masks[0]] + masks[14:26] + [masks[1]]
