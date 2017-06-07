@@ -25,8 +25,9 @@ from tensorflow.python.platform import flags
 from prediction_input_flo_res256 import build_tfrecord_input, DATA_DIR
 from prediction_input_flo_eval import build_tfrecord_input_eval
 from prediction_model_flo_res256 import construct_model
-from visualize import plot_flo, plot_eval
+from visualize import plot_flo, plot_eval, plot_grad
 from optical_flow_warp import transformer
+import matplotlib
 
 import os
 
@@ -187,6 +188,9 @@ def cal_weighted_edge_diff(image, mask, kernels, scale=1.0):
     
   return error / len(kernels)
 
+def threshold(t):
+  return tf.where(t<0.5, x=tf.constant(0.0, shape=t.get_shape()), y=tf.constant(1.0, shape=t.get_shape()))
+
 def average_gradients(tower_grads):
   """Calculate the average gradient for each shared variable across all towers.
 
@@ -230,6 +234,8 @@ class Model(object):
                image1=None,
                image2=None,
                flo=None,
+               image=None,
+               mask=None,
                reuse_scope=False,
                scope=None,
                prefix="train"):
@@ -256,13 +262,18 @@ class Model(object):
     
     with tf.variable_scope(scope, reuse=True):
       poss_move_mask2, bg_mask2 = construct_model(image2)
+      poss_move_mask, bg_mask = construct_model(image)
+    
+    #supervised loss
+#     sup_error = mean_L1_error(poss_move_mask, mask)
+    sup_loss = -tf.reduce_mean(mask*tf.log(poss_move_mask+1e-10) + (1.0-mask)*tf.log(bg_mask+1e-10))
     
     batch_size, img_height, img_width = map(int, image1.get_shape()[0:3])
     
     # L2 loss, PSNR for eval.
     flo_grad_loss = cal_grad_error_wmask(flo, bg_mask1, self.kernels)
-    img_grad_loss = cal_grad_error_wmask(image1, poss_move_mask1, self.kernels)
-    #img_grad_loss = cal_weighted_edge_diff(image1, poss_move_mask1, self.kernels, 1.0)
+#     img_grad_loss = cal_grad_error_wmask(image1, poss_move_mask1, self.kernels)
+#     img_grad_loss_we = cal_weighted_edge_diff(image1, poss_move_mask1, self.kernels, 1.0)
     
     #loss_mask_grad = cal_grad_error(1.0-poss_move_mask, self.kernels) * 1e-5
     var_loss = cal_weighted_var(flo, bg_mask1)
@@ -276,10 +287,13 @@ class Model(object):
     summaries.append(tf.summary.scalar(prefix + '_loss_var', var_loss))
     summaries.append(tf.summary.scalar(prefix + '_loss_seg', seg_loss))
     summaries.append(tf.summary.scalar(prefix + '_loss_flo_grad', flo_grad_loss))
-    summaries.append(tf.summary.scalar(prefix + '_loss_img_grad', img_grad_loss))
+#     summaries.append(tf.summary.scalar(prefix + '_loss_img_grad', img_grad_loss))
     summaries.append(tf.summary.scalar(prefix + '_loss_moveMask', move_mask_loss))
+#     summaries.append(tf.summary.scalar(prefix + '_sup_L1_error', sup_error))
+    summaries.append(tf.summary.scalar(prefix + '_loss_sup', sup_loss))
     
-    self.loss = flo_grad_loss*4.0 + img_grad_loss*4.0 + move_mask_loss + seg_loss*4.0 + var_loss
+    #self.loss = flo_grad_loss*0.0 + img_grad_loss*0.0 + move_mask_loss*0.0 + seg_loss*5.0+ var_loss*1.0 + sup_loss*1.0
+    self.loss = seg_loss*10.0+ var_loss*1.0 + sup_loss*0.0 + flo_grad_loss*1.0
     self.orig_image1 = image1
     self.orig_image2 = image2
     self.flo = flo
@@ -287,6 +301,14 @@ class Model(object):
     self.poss_move_mask2 = poss_move_mask2
     self.poss_move_maskt = poss_move_maskt
         
+    self.flo_grad_bg_mask = tf.gradients(flo_grad_loss, [bg_mask1])[0]
+#     self.img_grad_poss_move_mask = tf.gradients(img_grad_loss, [poss_move_mask1])[0]
+#     self.img_grad_we_poss_move_mask = tf.gradients(img_grad_loss_we, [poss_move_mask1])[0]
+    self.var_loss_bg_mask = tf.gradients(var_loss, [bg_mask1])[0]
+#     self.sup_loss_poss_move_mask = tf.gradients(sup_error, [poss_move_mask])[0]
+    self.move_loss_poss_move_mask = tf.gradients(move_mask_loss, [poss_move_mask1])[0]
+    self.seg_loss_poss_move_mask = tf.gradients(seg_loss, [poss_move_mask1])[0]
+    
     summaries.append(tf.summary.scalar(prefix + '_loss', self.loss))
     
     self.summ_op = tf.summary.merge(summaries)
@@ -316,25 +338,29 @@ class Model_eval(object):
     with tf.variable_scope(scope, reuse=True):
       poss_move_mask, bg_mask = construct_model(image)
     
-    eval_error = mean_L1_error(poss_move_mask, mask)
-    true_img_grad_loss = cal_grad_error_wmask(image, mask, self.kernels)
-    pred_img_grad_loss = cal_grad_error_wmask(image, poss_move_mask, self.kernels)
+    eval_error = mean_L1_error(threshold(poss_move_mask), mask)
+    eval_loss = -tf.reduce_mean(mask*tf.log(poss_move_mask) + (1.0-mask)*tf.log(bg_mask))
+    
+#     true_img_grad_loss = cal_grad_error_wmask(image, mask, self.kernels)
+#     pred_img_grad_loss = cal_grad_error_wmask(image, poss_move_mask, self.kernels)
     
     true_seg_loss = tf.reduce_sum(tf.square(tf.reduce_sum(mask, axis=[1,2], keep_dims=True))) / tf.to_float(batch_size*img_height*img_height*img_width*img_width)
     pred_seg_loss = tf.reduce_sum(tf.square(tf.reduce_sum(poss_move_mask, axis=[1,2], keep_dims=True))) / tf.to_float(batch_size*img_height*img_height*img_width*img_width)
     
-    summaries.append(tf.summary.scalar('eval_loss', eval_error))
-    summaries.append(tf.summary.scalar('eval_true_img_grad_loss', true_img_grad_loss))
+    summaries.append(tf.summary.scalar('eval_error', eval_error))
+    summaries.append(tf.summary.scalar('eval_loss', eval_loss))
+#     summaries.append(tf.summary.scalar('eval_true_img_grad_loss', true_img_grad_loss))
+#     summaries.append(tf.summary.scalar('eval_pred_img_grad_loss', pred_img_grad_loss))
     summaries.append(tf.summary.scalar('eval_true_seg_loss', true_seg_loss))
-    summaries.append(tf.summary.scalar('eval_pred_img_grad_loss', pred_img_grad_loss))
     summaries.append(tf.summary.scalar('eval_pred_seg_loss', pred_seg_loss))
     
     self.summ_op = tf.summary.merge(summaries)
     self.image = image
     self.mask_true = mask
-    self.mask_pred = poss_move_mask
+    self.mask_pred = threshold(poss_move_mask)
     
 def main(unused_argv):
+  matplotlib.use('Agg')
   if FLAGS.output_dir == "":
     raise Exception("OUT_DIR must be specified")
   
@@ -355,7 +381,11 @@ def main(unused_argv):
     split_image2 = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=image2)
     split_flo = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=flo)
     
-    image_eval, mask_eval = build_tfrecord_input_eval()
+    image_sup, mask_sup = build_tfrecord_input_eval(training=True)
+    split_image_sup = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=image_sup)
+    split_mask_sup = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=mask_sup)
+    
+    image_eval, mask_eval = build_tfrecord_input_eval(training=False)
     
     summaries_cpu = tf.get_collection(tf.GraphKeys.SUMMARIES, tf.get_variable_scope().name)
 
@@ -368,9 +398,11 @@ def main(unused_argv):
             scopename = '%s_%d' % ("tower", i)
           with tf.name_scope(scopename) as ns:
             if i == 0:
-              model = Model(split_image[i], split_image2[i], split_flo[i], reuse_scope=False, scope=vs)
+              model = Model(split_image[i], split_image2[i], split_flo[i], split_image_sup[i], split_mask_sup[i], 
+                            reuse_scope=False, scope=vs)
             else:
-              model = Model(split_image[i], split_image2[i], split_flo[i], reuse_scope=True, scope=vs)
+              model = Model(split_image[i], split_image2[i], split_flo[i], split_image_sup[i], split_mask_sup[i],
+                            reuse_scope=True, scope=vs)
             
             loss = model.loss
             # Retain the summaries from the final tower.
@@ -424,17 +456,28 @@ def main(unused_argv):
                                       feed_dict)
     
       if (itr) % SAVE_INTERVAL == 2:
-        orig_image1, orig_image2, flo, poss_move_mask1, poss_move_mask2, poss_move_maskt = sess.run([model.orig_image1, 
+        orig_image1, orig_image2, flo, poss_move_mask1, poss_move_mask2, poss_move_maskt, flo_grad_bg_mask, \
+        var_loss_bg_mask, move_poss_move_mask, seg_loss_poss_move_mask = sess.run([model.orig_image1, 
                                                     model.orig_image2,
                                                     model.flo, 
                                                     model.poss_move_mask1,
                                                     model.poss_move_mask2,
-                                                    model.poss_move_maskt],
+                                                    model.poss_move_maskt,
+                                                    model.flo_grad_bg_mask,
+                                                    #model.img_grad_poss_move_mask,
+                                                    #model.img_grad_we_poss_move_mask,
+                                                    model.var_loss_bg_mask,
+                                                    #model.sup_loss_poss_move_mask,
+                                                    model.move_loss_poss_move_mask,
+                                                    model.seg_loss_poss_move_mask],
                                                     feed_dict)
-#         tf.logging.info('Saving model.')
-#         saver.save(sess, FLAGS.output_dir + '/model' + str(itr))
+        if (itr) % SAVE_INTERVAL*10 == 2:  
+          tf.logging.info('Saving model.')
+          saver.save(sess, FLAGS.output_dir + '/model' + str(itr))
         plot_flo(orig_image1, orig_image2, flo, poss_move_mask1, poss_move_mask2, poss_move_maskt,
                  output_dir=FLAGS.output_dir, itr=itr)
+        plot_grad(var_loss_bg_mask, seg_loss_poss_move_mask, move_poss_move_mask, flo_grad_bg_mask,
+                  output_dir=FLAGS.output_dir, itr=itr)
         
         eval_summary_str, eval_image, eval_mask_true, eval_mask_pred = sess.run([eval_model.summ_op, 
                                                                                  eval_model.image, 
@@ -447,7 +490,7 @@ def main(unused_argv):
       if (itr) % SUMMARY_INTERVAL:
         summary_writer.add_summary(summary_str, itr)
         
-      if (itr) % SUMMARY_INTERVAL*2 :
+      if (itr) % SUMMARY_INTERVAL*5 :
         eval_summary_str = sess.run(eval_model.summ_op)
         summary_writer.add_summary(eval_summary_str, itr)
         

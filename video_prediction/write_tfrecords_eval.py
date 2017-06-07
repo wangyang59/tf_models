@@ -39,10 +39,14 @@ def convert_to(out_name, data_files):
   print('Writing', out_name)
   
   for data_file in data_files:
+    print(data_file)
     image_file, gt_file = data_file
     
     im = resize_image(image_file, 256)
-    image_raw = np.array(im.getdata(), dtype=np.float32).reshape((256, 256, 3)) / 255.0
+    try:
+      image_raw = np.array(im.getdata(), dtype=np.float32).reshape((256, 256, 3)) / 255.0
+    except:
+      continue
     
     im = resize_image(gt_file, 256)
     mask_raw = np.array(im.getdata(), dtype=np.float32).reshape((256, 256, 1)) / 255.0
@@ -60,8 +64,9 @@ def main(unused_argv):
   
   data_files = [(os.path.join(img_dir, file_name), os.path.join(gt_dir, file_name)) for file_name in file_names]
   
-  out_file = "/home/wangyang59/Data/ILSVRC2016_tf_eval/hku1.tfrecord"
-  convert_to(out_file, data_files[0:256])
+  for i in range(10, len(data_files) / 256):
+    out_file = "/home/wangyang59/Data/ILSVRC2016_tf_eval/hku%s.tfrecord" % i
+    convert_to(out_file, data_files[i*256 : (i+1)*256])
 
 if __name__ == '__main__':
   tf.app.run()

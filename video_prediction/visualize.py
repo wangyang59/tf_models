@@ -72,7 +72,7 @@ def plot_gif(orig_images, gen_images, shifted_masks, mask_lists, poss_move_masks
   with open(os.path.join(output_dir, "itr_"+str(itr), "shifted_mask.pickle"), "wb") as f:
     cPickle.dump(shifted_masks, f)
 
-def plot_flo(image1, image2, flo, poss_move_mask1, poss_move_mask2, output_dir, itr):
+def plot_flo(image1, image2, flo, poss_move_mask1, poss_move_mask2, poss_move_maskt, output_dir, itr):
   grey_cmap = plt.get_cmap("Greys")
   batch_size = image1.shape[0]
 
@@ -86,7 +86,7 @@ def plot_flo(image1, image2, flo, poss_move_mask1, poss_move_mask2, output_dir, 
   
   for cnt in range(batch_size):
     img = np.zeros((h * (img_size + gap), w * (img_size + gap), 3))
-    for idx in xrange(5):
+    for idx in xrange(6):
       i = idx % w
       j = idx // w
       
@@ -98,8 +98,10 @@ def plot_flo(image1, image2, flo, poss_move_mask1, poss_move_mask2, output_dir, 
         tmp = flow_to_image(flo[cnt])
       elif idx == 3:
         tmp = grey_cmap(poss_move_mask1[cnt, :, :, 0])[:, :, 0:3] * 255.0
-      else:
+      elif idx == 4:
         tmp = grey_cmap(poss_move_mask2[cnt, :, :, 0])[:, :, 0:3] * 255.0
+      else:
+        tmp = grey_cmap(poss_move_maskt[cnt, :, :, 0])[:, :, 0:3] * 255.0
       
       img[j*(img_size+gap):j*(img_size+gap)+img_size, i*(img_size+gap):i*(img_size+gap)+img_size, :] = \
           tmp
@@ -108,6 +110,108 @@ def plot_flo(image1, image2, flo, poss_move_mask1, poss_move_mask2, output_dir, 
 
     im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + ".jpeg"))
   #return img
+
+def plot_eval(image, mask1, mask2, output_dir, itr):
+  grey_cmap = plt.get_cmap("Greys")
+  batch_size = image.shape[0]
+
+  h = 2
+  w = 2
+  img_size = image.shape[1]
+  gap = 3
+  
+  if not os.path.exists(os.path.join(output_dir, "itr_"+str(itr))):
+    os.makedirs(os.path.join(output_dir, "itr_"+str(itr)))
+  
+  for cnt in range(batch_size):
+    img = np.zeros((h * (img_size + gap), w * (img_size + gap), 3))
+    for idx in xrange(3):
+      i = idx % w
+      j = idx // w
+      
+      if idx == 0:
+        tmp = image[cnt] * 255.0
+      elif idx == 1:
+        tmp = grey_cmap(mask1[cnt, :, :, 0])[:, :, 0:3] * 255.0
+      else:
+        tmp = grey_cmap(mask2[cnt, :, :, 0])[:, :, 0:3] * 255.0
+      
+      img[j*(img_size+gap):j*(img_size+gap)+img_size, i*(img_size+gap):i*(img_size+gap)+img_size, :] = \
+          tmp
+    
+    im = Image.fromarray(img.astype('uint8'))
+
+    im.save(os.path.join(output_dir, "itr_"+str(itr), "eval_" + str(cnt) + ".jpeg"))
+    
+
+def plot_grad(var_loss_bg_mask, seg_loss_poss_move_mask, move_poss_move_mask, flo_grad_bg_mask, output_dir, itr):
+  batch_size = var_loss_bg_mask.shape[0]
+  h = 2
+  w = 2
+  img_size = var_loss_bg_mask.shape[1]
+  gap = 3
+  grey_cmap = plt.get_cmap("Greys")
+  
+  for cnt in range(batch_size):
+    fig, ax = plt.subplots(nrows=2,ncols=3, figsize=(20,10))
+
+    heatmap = ax[0, 0].pcolor(flo_grad_bg_mask[cnt, ::-1, :, 0], cmap=grey_cmap)
+    fig.colorbar(heatmap, ax=ax[0, 0])
+#     
+#    heatmap = ax[0, 1].pcolor(-img_grad_poss_move_mask[cnt, ::-1, :, 0], cmap=grey_cmap)
+#    fig.colorbar(heatmap, ax=ax[0, 1])
+    
+    heatmap = ax[1, 0].pcolor(var_loss_bg_mask[cnt, ::-1, :, 0], cmap=grey_cmap)
+    fig.colorbar(heatmap, ax=ax[1, 0])
+    
+#     heatmap = ax[1, 1].pcolor(-img_grad_we_poss_move_mask[cnt, ::-1, :, 0], cmap=grey_cmap)
+#     fig.colorbar(heatmap, ax=ax[1, 1])
+    
+    heatmap = ax[0, 2].pcolor(-move_poss_move_mask[cnt, ::-1, :, 0], cmap=grey_cmap)
+    fig.colorbar(heatmap, ax=ax[0, 2])
+    
+    heatmap = ax[1, 2].pcolor(-seg_loss_poss_move_mask[cnt, ::-1, :, 0], cmap=grey_cmap)
+    fig.colorbar(heatmap, ax=ax[1, 2])
+
+    fig.savefig(os.path.join(output_dir, "itr_"+str(itr), "grad_" + str(cnt) + ".png"))
+    plt.close(fig)
+    
+def plot_flo_edge(image1, flo, true_edge, pred_edge,
+                 output_dir, itr):
+  
+  grey_cmap = plt.get_cmap("Greys")
+  batch_size = image1.shape[0]
+
+  h = 2
+  w = 2
+  img_size = image1.shape[1]
+  gap = 3
+  
+  if not os.path.exists(os.path.join(output_dir, "itr_"+str(itr))):
+    os.makedirs(os.path.join(output_dir, "itr_"+str(itr)))
+  
+  for cnt in range(batch_size):
+    img = np.zeros((h * (img_size + gap), w * (img_size + gap), 3))
+    for idx in xrange(h*w):
+      i = idx % w
+      j = idx // w
+      
+      if idx == 0:
+        tmp = image1[cnt] * 255.0
+      elif idx == 1:
+        tmp = flow_to_image(flo[cnt])
+      elif idx == 2:
+        tmp = grey_cmap(true_edge[cnt, :, :, 0])[:, :, 0:3] * 255.0
+      else:
+        tmp = grey_cmap(pred_edge[cnt, :, :, 0])[:, :, 0:3] * 255.0
+      
+      img[j*(img_size+gap):j*(img_size+gap)+img_size, i*(img_size+gap):i*(img_size+gap)+img_size, :] = \
+          tmp
+    
+    im = Image.fromarray(img.astype('uint8'))
+
+    im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + ".jpeg"))
+
 
 def main():
   def merge(masks, batch_num, cmap):

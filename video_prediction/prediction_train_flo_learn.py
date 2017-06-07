@@ -24,8 +24,8 @@ from tensorflow.python.platform import flags
 
 from prediction_input_flo_res256 import build_tfrecord_input, DATA_DIR
 from prediction_input_flo_eval import build_tfrecord_input_eval
-from prediction_model_flo_res256 import construct_model
-from visualize import plot_flo, plot_eval
+from prediction_model_flo_edge import construct_model
+from visualize import plot_flo, plot_eval, plot_flo_edge
 from optical_flow_warp import transformer
 
 import os
@@ -187,6 +187,26 @@ def cal_weighted_edge_diff(image, mask, kernels, scale=1.0):
     
   return error / len(kernels)
 
+def create_flo_edge(flo, kernels):
+  batch_size, img_height, img_width, color_channels = map(int, flo.get_shape()[0:4])
+  
+  flo_shift_v = tf.nn.depthwise_conv2d(flo, tf.tile(kernels[0], [1, 1, color_channels, 1]), 
+                                           [1, 1, 1, 1], 'SAME')
+  flo_shift_h = tf.nn.depthwise_conv2d(flo, tf.tile(kernels[1], [1, 1, color_channels, 1]), 
+                                           [1, 1, 1, 1], 'SAME')
+  
+  pos = tf.constant(1.0, shape=[batch_size, img_height, img_width, 1])
+  neg = tf.constant(0.0, shape=[batch_size, img_height, img_width, 1])
+  
+  true_edge = tf.where(tf.reduce_max(tf.concat([tf.abs(flo-flo_shift_h), tf.abs(flo-flo_shift_v)], axis=[3]), 
+                                     axis=[3], keep_dims=True)>0.5, 
+                       x=pos, y=neg)
+  
+#   true_edge_h = tf.where(tf.reduce_max(tf.abs(flo-flo_shift_h), axis=[3], keep_dims=True)>0.3, x=pos, y=neg)
+#   true_edge_v = tf.where(tf.reduce_max(tf.abs(flo-flo_shift_v), axis=[3], keep_dims=True)>0.3, x=pos, y=neg)
+  
+  return true_edge
+
 def average_gradients(tower_grads):
   """Calculate the average gradient for each shared variable across all towers.
 
@@ -228,8 +248,8 @@ class Model(object):
 
   def __init__(self,
                image1=None,
-               image2=None,
                flo=None,
+               true_edge=None,
                reuse_scope=False,
                scope=None,
                prefix="train"):
@@ -247,45 +267,23 @@ class Model(object):
                            name='kernel_shift'+str(i), verify_shape=True)
       self.kernels.append(kernel)
     
-    
     if not reuse_scope:
-      poss_move_mask1, bg_mask1 = construct_model(image1)
+      edge_mask = construct_model(image1)
     else:  # If it's a validation or test model.
       with tf.variable_scope(scope, reuse=True):
-        poss_move_mask1, bg_mask1 = construct_model(image1)
+        edge_mask = construct_model(image1)
+        
+    #flo_mag = tf.sqrt(tf.square(flo[:,:,:,0:1]) + tf.square(flo[:,:,:,1:2]))
+#    true_edge_h, true_edge_v, true_edge = create_flo_edge(flo, self.kernels)
     
-    with tf.variable_scope(scope, reuse=True):
-      poss_move_mask2, bg_mask2 = construct_model(image2)
-    
-    batch_size, img_height, img_width = map(int, image1.get_shape()[0:3])
-    
-    # L2 loss, PSNR for eval.
-    flo_grad_loss = cal_grad_error_wmask(flo, bg_mask1, self.kernels)
-    img_grad_loss = cal_grad_error_wmask(image1, poss_move_mask1, self.kernels)
-    #img_grad_loss = cal_weighted_edge_diff(image1, poss_move_mask1, self.kernels, 1.0)
-    
-    #loss_mask_grad = cal_grad_error(1.0-poss_move_mask, self.kernels) * 1e-5
-    var_loss = cal_weighted_var(flo, bg_mask1)
-    #seg_loss = tf.reduce_sum(poss_move_mask) / tf.to_float(tf.size(poss_move_mask)) * 3.0
-    #seg_loss = tf.reduce_sum(tf.square(poss_move_mask1)) / tf.to_float(tf.size(poss_move_mask1))
-    seg_loss = tf.reduce_sum(tf.square(tf.reduce_sum(poss_move_mask1, axis=[1,2], keep_dims=True))) / tf.to_float(batch_size*img_height*img_height*img_width*img_width)
-
-    poss_move_maskt = transformer(poss_move_mask2, flo, [img_height, img_width])
-    move_mask_loss = mean_squared_error(poss_move_maskt, poss_move_mask1)
-    
-    summaries.append(tf.summary.scalar(prefix + '_loss_var', var_loss))
-    summaries.append(tf.summary.scalar(prefix + '_loss_seg', seg_loss))
-    summaries.append(tf.summary.scalar(prefix + '_loss_flo_grad', flo_grad_loss))
-    summaries.append(tf.summary.scalar(prefix + '_loss_img_grad', img_grad_loss))
-    summaries.append(tf.summary.scalar(prefix + '_loss_moveMask', move_mask_loss))
-    
-    self.loss = flo_grad_loss*4.0 + img_grad_loss*4.0 + move_mask_loss + seg_loss*4.0 + var_loss
+    loss = -tf.reduce_mean(true_edge*tf.log(edge_mask+1e-10) + (1.0-true_edge)*tf.log(1.0-edge_mask+1e-10))
+    #loss_v = -tf.reduce_mean(true_edge_v*tf.log(edge_mask_v+1e-10) + (1.0-true_edge_v)*tf.log(1.0-edge_mask_v+1e-10))
+        
+    self.loss = loss
     self.orig_image1 = image1
-    self.orig_image2 = image2
     self.flo = flo
-    self.poss_move_mask1 = poss_move_mask1
-    self.poss_move_mask2 = poss_move_mask2
-    self.poss_move_maskt = poss_move_maskt
+    self.true_edge = true_edge
+    self.pred_edge = edge_mask
         
     summaries.append(tf.summary.scalar(prefix + '_loss', self.loss))
     
@@ -314,25 +312,12 @@ class Model_eval(object):
     batch_size, img_height, img_width = map(int, image.get_shape()[0:3])
     
     with tf.variable_scope(scope, reuse=True):
-      poss_move_mask, bg_mask = construct_model(image)
+      edge_mask_h = construct_model(image)
     
-    eval_error = mean_L1_error(poss_move_mask, mask)
-    true_img_grad_loss = cal_grad_error_wmask(image, mask, self.kernels)
-    pred_img_grad_loss = cal_grad_error_wmask(image, poss_move_mask, self.kernels)
-    
-    true_seg_loss = tf.reduce_sum(tf.square(tf.reduce_sum(mask, axis=[1,2], keep_dims=True))) / tf.to_float(batch_size*img_height*img_height*img_width*img_width)
-    pred_seg_loss = tf.reduce_sum(tf.square(tf.reduce_sum(poss_move_mask, axis=[1,2], keep_dims=True))) / tf.to_float(batch_size*img_height*img_height*img_width*img_width)
-    
-    summaries.append(tf.summary.scalar('eval_loss', eval_error))
-    summaries.append(tf.summary.scalar('eval_true_img_grad_loss', true_img_grad_loss))
-    summaries.append(tf.summary.scalar('eval_true_seg_loss', true_seg_loss))
-    summaries.append(tf.summary.scalar('eval_pred_img_grad_loss', pred_img_grad_loss))
-    summaries.append(tf.summary.scalar('eval_pred_seg_loss', pred_seg_loss))
-    
-    self.summ_op = tf.summary.merge(summaries)
+    #self.summ_op = tf.summary.merge(summaries)
     self.image = image
     self.mask_true = mask
-    self.mask_pred = poss_move_mask
+    self.pred_edge_h = edge_mask_h
     
 def main(unused_argv):
   if FLAGS.output_dir == "":
@@ -349,11 +334,11 @@ def main(unused_argv):
     tower_grads = []
     itr_placeholders = []
     
-    image, image2, flo= build_tfrecord_input(training=True)
+    image, flo, true_edge= build_tfrecord_input(training=True)
     
     split_image = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=image)
-    split_image2 = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=image2)
     split_flo = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=flo)
+    split_true_edge = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=true_edge)
     
     image_eval, mask_eval = build_tfrecord_input_eval()
     
@@ -368,9 +353,9 @@ def main(unused_argv):
             scopename = '%s_%d' % ("tower", i)
           with tf.name_scope(scopename) as ns:
             if i == 0:
-              model = Model(split_image[i], split_image2[i], split_flo[i], reuse_scope=False, scope=vs)
+              model = Model(split_image[i], split_flo[i], split_true_edge[i], reuse_scope=False, scope=vs)
             else:
-              model = Model(split_image[i], split_image2[i], split_flo[i], reuse_scope=True, scope=vs)
+              model = Model(split_image[i], split_flo[i], split_true_edge[i], reuse_scope=True, scope=vs)
             
             loss = model.loss
             # Retain the summaries from the final tower.
@@ -412,6 +397,7 @@ def main(unused_argv):
       start_itr = int(FLAGS.pretrained_model.split("/")[-1][5:])
     else:
       sess.run(tf.global_variables_initializer())
+      sess.run(tf.local_variables_initializer())
       start_itr = 0
       
     tf.train.start_queue_runners(sess)
@@ -424,32 +410,33 @@ def main(unused_argv):
                                       feed_dict)
     
       if (itr) % SAVE_INTERVAL == 2:
-        orig_image1, orig_image2, flo, poss_move_mask1, poss_move_mask2, poss_move_maskt = sess.run([model.orig_image1, 
-                                                    model.orig_image2,
-                                                    model.flo, 
-                                                    model.poss_move_mask1,
-                                                    model.poss_move_mask2,
-                                                    model.poss_move_maskt],
-                                                    feed_dict)
-#         tf.logging.info('Saving model.')
-#         saver.save(sess, FLAGS.output_dir + '/model' + str(itr))
-        plot_flo(orig_image1, orig_image2, flo, poss_move_mask1, poss_move_mask2, poss_move_maskt,
+        orig_image1, flo, true_edge, \
+        pred_edge = sess.run([model.orig_image1, 
+                              model.flo, 
+                              model.true_edge,
+                              model.pred_edge],
+                             feed_dict)
+        
+        if (itr) % (SAVE_INTERVAL*10) == 2:
+          tf.logging.info('Saving model.')
+          saver.save(sess, FLAGS.output_dir + '/model' + str(itr))
+        plot_flo_edge(orig_image1, flo, true_edge, pred_edge,
                  output_dir=FLAGS.output_dir, itr=itr)
         
-        eval_summary_str, eval_image, eval_mask_true, eval_mask_pred = sess.run([eval_model.summ_op, 
-                                                                                 eval_model.image, 
-                                                                                 eval_model.mask_true, 
-                                                                                 eval_model.mask_pred])
-        
-        plot_eval(eval_image, eval_mask_true, eval_mask_pred, 
-                  output_dir=FLAGS.output_dir, itr=itr)
+#         eval_summary_str, eval_image, eval_mask_true, eval_mask_pred = sess.run([eval_model.summ_op, 
+#                                                                                  eval_model.image, 
+#                                                                                  eval_model.mask_true, 
+#                                                                                  eval_model.mask_pred])
+#         
+#         plot_eval(eval_image, eval_mask_true, eval_mask_pred, 
+#                   output_dir=FLAGS.output_dir, itr=itr)
         
       if (itr) % SUMMARY_INTERVAL:
         summary_writer.add_summary(summary_str, itr)
         
-      if (itr) % SUMMARY_INTERVAL*2 :
-        eval_summary_str = sess.run(eval_model.summ_op)
-        summary_writer.add_summary(eval_summary_str, itr)
+#       if (itr) % SUMMARY_INTERVAL*2 :
+#         eval_summary_str = sess.run(eval_model.summ_op)
+#         summary_writer.add_summary(eval_summary_str, itr)
         
     tf.logging.info('Saving model.')
     saver.save(sess, FLAGS.output_dir + '/model')

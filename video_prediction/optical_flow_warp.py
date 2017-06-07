@@ -169,11 +169,11 @@ def transformer(U, flo, out_size, name='SpatialTransformer', **kwargs):
 
             output = tf.reshape(
                 input_transformed, tf.stack([num_batch, out_height, out_width, num_channels]))
-            return output, x_s, y_s
+            return output
 
     with tf.variable_scope(name):
-        output, x_s, y_s = _transform(flo, U, out_size)
-        return output, x_s, y_s
+        output = _transform(flo, U, out_size)
+        return output
       
 
 def main(unused_argv):
@@ -188,10 +188,8 @@ def main(unused_argv):
   #flo[0, 1, 1, 1] = 1.0
   flo = tf.constant(flo, dtype="float32")
   
-  image2, x_s, y_s = transformer(image, flo, [3, 3])
+  image2 = transformer(image, flo, [3, 3])
   
-  print(x_s.eval(session=sess))
-  print(y_s.eval(session=sess))
   print(image2.eval(session=sess))
   
 if __name__ == '__main__':

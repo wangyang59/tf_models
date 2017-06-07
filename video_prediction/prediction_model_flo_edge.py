@@ -259,16 +259,26 @@ def construct_model(image):
       normalizer_fn=tf_layers.layer_norm,
       normalizer_params={'scope': 'layer_norm15_s'})
   
-  masks_s = slim.layers.conv2d_transpose(
+  masks_h = slim.layers.conv2d_transpose(
       enc10_s, 2, 1, stride=1, scope='convt6_s')#, biases_initializer=tf.constant_initializer([0.0, 1.0]))
-  
-  masks_probs_s = tf.nn.softmax(tf.reshape(masks_s, [-1, 2]))
+  masks_probs_h = tf.nn.softmax(tf.reshape(masks_h, [-1, 2]))
   #entropy_losses.append(tf.reduce_mean(-tf.reduce_sum(masks_probs * tf.log(masks_probs + 1e-10), [1])))
-  masks_s = tf.reshape(
-      masks_probs_s,
+  masks_h = tf.reshape(
+      masks_probs_h,
       #gumbel_softmax(tf.reshape(masks, [-1, num_masks]), TEMP, hard=False),
       [int(batch_size), int(img_height), int(img_width), 2])
-  poss_move_mask, bg_mask = tf.split(axis=3, num_or_size_splits=2, value=masks_s)
+  edge_mask_h = tf.split(axis=3, num_or_size_splits=2, value=masks_h)[0]
+  
+  
+#   masks_v = slim.layers.conv2d_transpose(
+#       enc10_s, 2, 1, stride=1, scope='convt7_s')#, biases_initializer=tf.constant_initializer([0.0, 1.0]))
+#   masks_probs_v = tf.nn.softmax(tf.reshape(masks_v, [-1, 2]))
+#   #entropy_losses.append(tf.reduce_mean(-tf.reduce_sum(masks_probs * tf.log(masks_probs + 1e-10), [1])))
+#   masks_v = tf.reshape(
+#       masks_probs_v,
+#       #gumbel_softmax(tf.reshape(masks, [-1, num_masks]), TEMP, hard=False),
+#       [int(batch_size), int(img_height), int(img_width), 2])
+#   edge_mask_v = tf.split(axis=3, num_or_size_splits=2, value=masks_v)[0]
 
-  return poss_move_mask, bg_mask
+  return edge_mask_h
 
