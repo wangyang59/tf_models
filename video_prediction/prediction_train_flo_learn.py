@@ -22,11 +22,11 @@ import tensorflow as tf
 from tensorflow.python.platform import app
 from tensorflow.python.platform import flags
 
-from prediction_input_flo_res256 import build_tfrecord_input, DATA_DIR
-from prediction_input_flo_eval import build_tfrecord_input_eval
-from prediction_model_flo_edge import construct_model
-from visualize import plot_flo, plot_eval, plot_flo_edge
+from prediction_input_flo_chair import build_tfrecord_input, DATA_DIR
+from prediction_model_flo_chair import construct_model
+from visualize import plot_flo_learn
 from optical_flow_warp import transformer
+from optical_flow_warp_fwd import transformerFwd
 
 import os
 
@@ -47,7 +47,7 @@ flags.DEFINE_integer('num_iterations', 100000, 'number of training iterations.')
 flags.DEFINE_string('pretrained_model', '',
                     'filepath of a pretrained model to initialize from.')
 
-flags.DEFINE_float('train_val_split', 1.0,
+flags.DEFINE_float('train_val_split', 0.95,
                    'The percentage of files to use for the training set,'
                    ' vs. the validation set.')
 
@@ -90,6 +90,13 @@ def mean_squared_error(true, pred):
     mean squared error between ground truth and predicted image.
   """
   return tf.reduce_sum(tf.square(true - pred)) / tf.to_float(tf.size(pred))
+
+def mean_charb_error(true, pred, beta):
+  return tf.reduce_sum(tf.sqrt((tf.square(beta*(true-pred)) + 0.001*0.001))) / tf.to_float(tf.size(pred))
+
+def mean_charb_error_wmask(true, pred, mask, beta):
+  return tf.reduce_sum(tf.sqrt((tf.square(beta*(true-pred)) + 0.001*0.001))*mask) / tf.to_float(tf.size(pred))
+
 
 def weighted_mean_squared_error(true, pred, weight):
   """L2 distance between tensors true and pred.
@@ -148,18 +155,25 @@ def cal_grad_error_wmask(image, mask, kernels):
     
   return error / len(kernels)
   
-def cal_grad_error(image, kernels):
+def cal_grad_error(image, beta):
   """Calculate the gradient of the given image by calculate the difference between nearby pixels
   """
   error = 0.0
-  img_height, img_width, color_channels = map(int, image.get_shape()[1:4])
-  cropped_image = image[:, 1:(img_height-1), 1:(img_width-1), :]
-  for kernel in kernels:
-    shifted_image = tf.nn.depthwise_conv2d(image, tf.tile(kernel, [1, 1, color_channels, 1]), 
-                                           [1, 1, 1, 1], 'SAME')
-    error += mean_L1_error(cropped_image, shifted_image[:, 1:(img_height-1), 1:(img_width-1), :])
+  
+  error += mean_charb_error(image[:, 1:, :, :], image[:, :-1, :, :], beta)
+  error += mean_charb_error(image[:, :, 1:, :], image[:, :, :-1, :], beta)
     
-  return error / len(kernels)
+  return error / 2.0
+
+def img_grad_error(true, pred, mask, beta):
+  error = 0.0
+  
+  error += mean_charb_error_wmask(true[:, 1:, :, :] - true[:, :-1, :, :], 
+                            pred[:, 1:, :, :] - pred[:, :-1, :, :], mask[:, 1:, :, :], beta)
+  error += mean_charb_error_wmask(true[:, :, 1:, :] - true[:, :, :-1, :], 
+                            pred[:, :, 1:, :] - pred[:, :, :-1, :], mask[:, :, 1:, :], beta)
+  
+  return error / 2.0
 
 def cal_weighted_var(image, mask):
   
@@ -207,6 +221,29 @@ def create_flo_edge(flo, kernels):
   
   return true_edge
 
+def epe(flo1, flo2):
+  return tf.reduce_mean(tf.sqrt(tf.reduce_sum(tf.square(flo1 - flo2), axis=3)))
+
+def down_sample(image):
+  batch_size, img_height, img_width, color_channels = map(int, image.get_shape()[0:4])
+  kernel = np.array([1., 2., 1., 2., 4., 2., 1., 2., 1.], dtype=np.float32) / 16.0
+  kernel = kernel.reshape((3, 3, 1, 1))
+  kernel = tf.constant(kernel, shape=(3, 3, 1, 1), 
+                       name='gaussian_kernel', verify_shape=True)
+  
+  blur_image = tf.nn.depthwise_conv2d(image, tf.tile(kernel, [1, 1, color_channels, 1]), 
+                                           [1, 1, 1, 1], 'SAME')
+  return tf.image.resize_bicubic(blur_image, [img_height/2, img_width/2])
+  
+def get_pyrimad(image):
+  image2 = down_sample(down_sample(image))
+  image3 = down_sample(image2)
+  image4 = down_sample(image3)
+  image5 = down_sample(image4)
+  image6 = down_sample(image5)
+  
+  return image2, image3, image4, image5, image6
+  
 def average_gradients(tower_grads):
   """Calculate the average gradient for each shared variable across all towers.
 
@@ -248,8 +285,8 @@ class Model(object):
 
   def __init__(self,
                image1=None,
-               flo=None,
-               true_edge=None,
+               image2=None,
+               true_flo=None,
                reuse_scope=False,
                scope=None,
                prefix="train"):
@@ -258,67 +295,130 @@ class Model(object):
     self.iter_num = tf.placeholder(tf.float32, [])
     summaries = []
     
-    self.kernels = []
-    for i in xrange(4):
-      kernel = np.zeros((3 * 3), dtype=np.float32)
-      kernel[i*2 + 1] = 1.0
-      kernel = kernel.reshape((3, 3, 1, 1))
-      kernel = tf.constant(kernel, shape=(3, 3, 1, 1), 
-                           name='kernel_shift'+str(i), verify_shape=True)
-      self.kernels.append(kernel)
+    batch_size, H, W, color_channels = map(int, image1.get_shape()[0:4])
     
     if not reuse_scope:
-      edge_mask = construct_model(image1)
+      flow2, flow3, flow4, flow5, flow6 = construct_model(image1, image2)
     else:  # If it's a validation or test model.
       with tf.variable_scope(scope, reuse=True):
-        edge_mask = construct_model(image1)
-        
-    #flo_mag = tf.sqrt(tf.square(flo[:,:,:,0:1]) + tf.square(flo[:,:,:,1:2]))
-#    true_edge_h, true_edge_v, true_edge = create_flo_edge(flo, self.kernels)
+        flow2, flow3, flow4, flow5, flow6 = construct_model(image1, image2)
+      
+    with tf.variable_scope(scope, reuse=True):
+      flow2r, flow3r, flow4r, flow5r, flow6r = construct_model(image2, image1)
     
-    loss = -tf.reduce_mean(true_edge*tf.log(edge_mask+1e-10) + (1.0-true_edge)*tf.log(1.0-edge_mask+1e-10))
-    #loss_v = -tf.reduce_mean(true_edge_v*tf.log(edge_mask_v+1e-10) + (1.0-true_edge_v)*tf.log(1.0-edge_mask_v+1e-10))
+    occu_mask_6 = transformerFwd(tf.ones(shape=[batch_size, H/64, W/64, 1], dtype='float32'), 
+                                 20*flow6r/64.0, [H/64, W/64])
+    occu_mask_5 = transformerFwd(tf.ones(shape=[batch_size, H/32, W/32, 1], dtype='float32'), 
+                                 20*flow5r/32.0, [H/32, W/32])
+    occu_mask_4 = transformerFwd(tf.ones(shape=[batch_size, H/16, W/16, 1], dtype='float32'), 
+                                 20*flow4r/16.0, [H/16, W/16])
+    occu_mask_3 = transformerFwd(tf.ones(shape=[batch_size, H/8, W/8, 1], dtype='float32'), 
+                                 20*flow3r/8.0, [H/8, W/8])
+    occu_mask_2 = transformerFwd(tf.ones(shape=[batch_size, H/4, W/4, 1], dtype='float32'), 
+                                 20*flow2r/4.0, [H/4, W/4])
+    
+    image1_2, image1_3, image1_4, image1_5, image1_6 = get_pyrimad(image1)
+    image2_2, image2_3, image2_4, image2_5, image2_6 = get_pyrimad(image2)
+    
+    image1_6p = transformer(image2_6, 20*flow6/64.0, [H/64, W/64])
+    loss6 = mean_charb_error_wmask(image1_6, image1_6p, occu_mask_6, 1.0)
+    
+    image1_5p = transformer(image2_5, 20*flow5/32.0, [H/32, W/32])
+    loss5 = mean_charb_error_wmask(image1_5, image1_5p, occu_mask_5, 1.0)
+    
+    image1_4p = transformer(image2_4, 20*flow4/16.0, [H/16, W/16])
+    loss4 = mean_charb_error_wmask(image1_4, image1_4p, occu_mask_4, 1.0)
+    
+    image1_3p = transformer(image2_3, 20*flow3/8.0, [H/8, W/8])
+    loss3 = mean_charb_error_wmask(image1_3, image1_3p, occu_mask_3, 1.0)
+    
+    image1_2p = transformer(image2_2, 20*flow2/4.0, [H/4, W/4])
+    loss2 = mean_charb_error_wmask(image1_2, image1_2p, occu_mask_2, 1.0)
+    
+    
+    grad_error6 = cal_grad_error(flow6, 1.0/64.0)
+    grad_error5 = cal_grad_error(flow5, 1.0/32.0)
+    grad_error4 = cal_grad_error(flow4, 1.0/16.0)
+    grad_error3 = cal_grad_error(flow3, 1.0/8.0)
+    grad_error2 = cal_grad_error(flow2, 1.0/4.0)
+    
+    img_grad_error6 = img_grad_error(image1_6p, image1_6, occu_mask_6, 1.0)
+    img_grad_error5 = img_grad_error(image1_5p, image1_5, occu_mask_5, 1.0)
+    img_grad_error4 = img_grad_error(image1_4p, image1_4, occu_mask_4, 1.0)
+    img_grad_error3 = img_grad_error(image1_3p, image1_3, occu_mask_3, 1.0)
+    img_grad_error2 = img_grad_error(image1_2p, image1_2, occu_mask_2, 1.0)
+    
+#     loss = 0.05*(loss2+img_grad_error2) + 0.1*(loss3+img_grad_error3) + \
+#            0.2*(loss4+img_grad_error4) + 0.8*(loss5+img_grad_error5) + 3.2*(loss6+img_grad_error6) + \
+#            (0.05*grad_error2 + 0.1*grad_error3 + 0.2*grad_error4 + 0.8*grad_error5 + 3.2*grad_error6)*2.0
+           
+    loss = 3.2*(loss2+img_grad_error2) + 0.8*(loss3+img_grad_error3) + \
+           0.2*(loss4+img_grad_error4) + 0.1*(loss5+img_grad_error5) + 0.05*(loss6+img_grad_error6) + \
+           (3.2*grad_error2 + 0.8*grad_error3 + 0.2*grad_error4 + 0.1*grad_error5 + 0.05*grad_error6)*2.0
         
     self.loss = loss
-    self.orig_image1 = image1
-    self.flo = flo
-    self.true_edge = true_edge
-    self.pred_edge = edge_mask
-        
+    self.orig_image1 = image1_2
+    self.orig_image2 = image2_2
+    self.true_flo = tf.image.resize_bicubic(true_flo/4.0, [H/4, W/4])
+    self.pred_flo = 20*flow2 / 4.0
+    self.true_warp = transformer(self.orig_image2, self.true_flo, [H/4, W/4])
+    self.pred_warp = image1_2p
+    
     summaries.append(tf.summary.scalar(prefix + '_loss', self.loss))
+    summaries.append(tf.summary.scalar(prefix + '_loss2', loss2))
+    summaries.append(tf.summary.scalar(prefix + '_loss3', loss3))
+    summaries.append(tf.summary.scalar(prefix + '_loss4', loss4))
+    summaries.append(tf.summary.scalar(prefix + '_loss5', loss5))
+    summaries.append(tf.summary.scalar(prefix + '_loss6', loss6))
+    summaries.append(tf.summary.scalar(prefix + '_grad_loss2', grad_error2))
+    summaries.append(tf.summary.scalar(prefix + '_grad_loss3', grad_error3))
+    summaries.append(tf.summary.scalar(prefix + '_grad_loss4', grad_error4))
+    summaries.append(tf.summary.scalar(prefix + '_grad_loss5', grad_error5))
+    summaries.append(tf.summary.scalar(prefix + '_grad_loss6', grad_error6))
+    summaries.append(tf.summary.scalar(prefix + '_flo_loss', epe(true_flo, 
+                                                                 tf.image.resize_bicubic(self.pred_flo*4, [H, W]))))
     
     self.summ_op = tf.summary.merge(summaries)
-    
+
 class Model_eval(object):
 
   def __init__(self,
-               image=None,
-               mask=None,
-               scope=None):
+               image1=None,
+               image2=None,
+               true_flo=None,
+               scope=None,
+               prefix="eval"):
 
     #self.prefix = prefix = tf.placeholder(tf.string, [])
     self.iter_num = tf.placeholder(tf.float32, [])
     summaries = []
     
-    self.kernels = []
-    for i in xrange(4):
-      kernel = np.zeros((3 * 3), dtype=np.float32)
-      kernel[i*2 + 1] = 1.0
-      kernel = kernel.reshape((3, 3, 1, 1))
-      kernel = tf.constant(kernel, shape=(3, 3, 1, 1), 
-                           name='kernel_shift'+str(i), verify_shape=True)
-      self.kernels.append(kernel)
-      
-    batch_size, img_height, img_width = map(int, image.get_shape()[0:3])
+    batch_size, H, W, color_channels = map(int, image1.get_shape()[0:4])
     
     with tf.variable_scope(scope, reuse=True):
-      edge_mask_h = construct_model(image)
+      flow2, flow3, flow4, flow5, flow6 = construct_model(image1, image2)
     
-    #self.summ_op = tf.summary.merge(summaries)
-    self.image = image
-    self.mask_true = mask
-    self.pred_edge_h = edge_mask_h
+    image1_2, image1_3, image1_4, image1_5, image1_6 = get_pyrimad(image1)
+    image2_2, image2_3, image2_4, image2_5, image2_6 = get_pyrimad(image2)
+      
+    image1_2p = transformer(image2_2, 20*flow2/4.0, [H/4, W/4])
     
+    self.orig_image1 = image1_2
+    self.orig_image2 = image2_2
+    self.true_flo = tf.image.resize_bicubic(true_flo/4.0, [H/4, W/4])
+    self.pred_flo = 20*flow2 / 4.0
+    self.true_warp = transformer(self.orig_image2, self.true_flo, [H/4, W/4])
+    self.pred_warp = image1_2p
+    
+#     ones = tf.ones(shape=[batch_size, H/4, W/4, 1], dtype='float32')
+#     self.occu_mask = transformerFwd(ones, self.true_flo, [H/4, W/4])
+    
+    summaries.append(tf.summary.scalar(prefix + '_flo_loss', epe(true_flo, 
+                                                                 tf.image.resize_bicubic(20*flow2, [H, W]))))
+    
+    self.summ_op = tf.summary.merge(summaries)
+
+
 def main(unused_argv):
   if FLAGS.output_dir == "":
     raise Exception("OUT_DIR must be specified")
@@ -334,14 +434,14 @@ def main(unused_argv):
     tower_grads = []
     itr_placeholders = []
     
-    image, flo, true_edge= build_tfrecord_input(training=True)
+    image1, image2, flo= build_tfrecord_input(training=True)
     
-    split_image = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=image)
+    split_image1 = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=image1)
+    split_image2 = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=image2)
     split_flo = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=flo)
-    split_true_edge = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=true_edge)
     
-    image_eval, mask_eval = build_tfrecord_input_eval()
-    
+    eval_image1, eval_image2, eval_flo = build_tfrecord_input(training=False)
+        
     summaries_cpu = tf.get_collection(tf.GraphKeys.SUMMARIES, tf.get_variable_scope().name)
 
     with tf.variable_scope(tf.get_variable_scope()) as vs:
@@ -353,16 +453,15 @@ def main(unused_argv):
             scopename = '%s_%d' % ("tower", i)
           with tf.name_scope(scopename) as ns:
             if i == 0:
-              model = Model(split_image[i], split_flo[i], split_true_edge[i], reuse_scope=False, scope=vs)
+              model = Model(split_image1[i], split_image2[i], split_flo[i], reuse_scope=False, scope=vs)
             else:
-              model = Model(split_image[i], split_flo[i], split_true_edge[i], reuse_scope=True, scope=vs)
+              model = Model(split_image1[i], split_image2[i], split_flo[i], reuse_scope=True, scope=vs)
             
             loss = model.loss
             # Retain the summaries from the final tower.
             if i == FLAGS.num_gpus - 1:
               summaries = tf.get_collection(tf.GraphKeys.SUMMARIES, ns)
-              eval_model = Model_eval(image_eval, mask_eval, scope=vs)
-
+              eval_model = Model_eval(eval_image1, eval_image2, eval_flo, scope=vs)
             # Calculate the gradients for the batch of data on this CIFAR tower.
             grads = train_op.compute_gradients(loss)
 
@@ -394,7 +493,9 @@ def main(unused_argv):
   
     if FLAGS.pretrained_model:
       saver.restore(sess, FLAGS.pretrained_model)
-      start_itr = int(FLAGS.pretrained_model.split("/")[-1][5:])
+      #start_itr = int(FLAGS.pretrained_model.split("/")[-1][5:])
+      start_itr = 0
+      sess.run(tf.local_variables_initializer())
     else:
       sess.run(tf.global_variables_initializer())
       sess.run(tf.local_variables_initializer())
@@ -408,19 +509,20 @@ def main(unused_argv):
       feed_dict = {x:np.float32(itr) for x in itr_placeholders}
       _, summary_str = sess.run([apply_gradient_op, summary_op],
                                       feed_dict)
-    
+      summary_writer.add_summary(summary_str, itr)
+
       if (itr) % SAVE_INTERVAL == 2:
-        orig_image1, flo, true_edge, \
-        pred_edge = sess.run([model.orig_image1, 
-                              model.flo, 
-                              model.true_edge,
-                              model.pred_edge],
-                             feed_dict)
+        orig_image1, true_flo, pred_flo, true_warp, pred_warp = sess.run([eval_model.orig_image1, 
+                                                    eval_model.true_flo, 
+                                                    eval_model.pred_flo,
+                                                    eval_model.true_warp,
+                                                    eval_model.pred_warp],
+                                                   feed_dict)
         
         if (itr) % (SAVE_INTERVAL*10) == 2:
           tf.logging.info('Saving model.')
           saver.save(sess, FLAGS.output_dir + '/model' + str(itr))
-        plot_flo_edge(orig_image1, flo, true_edge, pred_edge,
+        plot_flo_learn(orig_image1, true_flo, pred_flo, true_warp, pred_warp,
                  output_dir=FLAGS.output_dir, itr=itr)
         
 #         eval_summary_str, eval_image, eval_mask_true, eval_mask_pred = sess.run([eval_model.summ_op, 
@@ -430,13 +532,10 @@ def main(unused_argv):
 #         
 #         plot_eval(eval_image, eval_mask_true, eval_mask_pred, 
 #                   output_dir=FLAGS.output_dir, itr=itr)
-        
-      if (itr) % SUMMARY_INTERVAL:
-        summary_writer.add_summary(summary_str, itr)
-        
-#       if (itr) % SUMMARY_INTERVAL*2 :
-#         eval_summary_str = sess.run(eval_model.summ_op)
-#         summary_writer.add_summary(eval_summary_str, itr)
+          
+      if (itr) % (SUMMARY_INTERVAL) == 2:
+        eval_summary_str = sess.run(eval_model.summ_op)
+        summary_writer.add_summary(eval_summary_str, itr)
         
     tf.logging.info('Saving model.')
     saver.save(sess, FLAGS.output_dir + '/model')

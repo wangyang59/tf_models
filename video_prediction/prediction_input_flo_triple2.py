@@ -23,7 +23,7 @@ import tensorflow as tf
 from tensorflow.python.platform import flags
 from tensorflow.python.platform import gfile
 
-DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf_flo'
+DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf_triple'
 #DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf_stab/train'
 FLAGS = flags.FLAGS
 
@@ -38,7 +38,6 @@ IMG_HEIGHT = 256
 
 # Dimension of the state and action.
 STATE_DIM = 5
-
 
 def build_tfrecord_input(training=True, blacklist=[]):
   """Create input tfrecord tensors.
@@ -61,48 +60,41 @@ def build_tfrecord_input(training=True, blacklist=[]):
     filenames = filenames[:index]
   else:
     filenames = filenames[index:]
-  filename_queue = tf.train.string_input_producer(filenames, shuffle=True)
+  filename_queue = tf.train.string_input_producer(filenames, shuffle=True, num_epochs=None)
   reader = tf.TFRecordReader()
   _, serialized_example = reader.read(filename_queue)
 
   features = {"image1_raw": tf.FixedLenFeature([1], tf.string),
               "image2_raw": tf.FixedLenFeature([1], tf.string),
-              "flo_raw": tf.FixedLenFeature([1], tf.string)}
+              "image3_raw": tf.FixedLenFeature([1], tf.string),
+              "file_name": tf.FixedLenFeature([1], tf.string)}
   features = tf.parse_single_example(serialized_example, features=features)
-  image = tf.decode_raw(features['image1_raw'], tf.float32)
-  image = tf.reshape(image, [ORIGINAL_HEIGHT, ORIGINAL_WIDTH, COLOR_CHAN])
   
-  image2 = tf.decode_raw(features['image2_raw'], tf.float32)
-  image2 = tf.reshape(image2, [ORIGINAL_HEIGHT, ORIGINAL_WIDTH, COLOR_CHAN])
+  image1_buffer = tf.reshape(features["image1_raw"], shape=[])
+  image1 = tf.image.decode_jpeg(image1_buffer, channels=COLOR_CHAN)
+  image1.set_shape([ORIGINAL_HEIGHT, ORIGINAL_WIDTH, COLOR_CHAN])
+  image1 = tf.cast(image1, tf.float32) / 255.0
   
-  flo = tf.decode_raw(features['flo_raw'], tf.float32)
-  flo = tf.reshape(flo, [ORIGINAL_HEIGHT, ORIGINAL_WIDTH, 2])
+  image2_buffer = tf.reshape(features["image2_raw"], shape=[])
+  image2 = tf.image.decode_jpeg(image2_buffer, channels=COLOR_CHAN)
+  image2.set_shape([ORIGINAL_HEIGHT, ORIGINAL_WIDTH, COLOR_CHAN])
+  image2 = tf.cast(image2, tf.float32) / 255.0
+  
+  image3_buffer = tf.reshape(features["image3_raw"], shape=[])
+  image3 = tf.image.decode_jpeg(image3_buffer, channels=COLOR_CHAN)
+  image3.set_shape([ORIGINAL_HEIGHT, ORIGINAL_WIDTH, COLOR_CHAN])
+  image3 = tf.cast(image3, tf.float32) / 255.0
   
   if IMG_HEIGHT != IMG_WIDTH:
     raise ValueError('Unequal height and width unsupported')
-
-  crop_size = min(ORIGINAL_HEIGHT, ORIGINAL_WIDTH)
-  image = tf.image.resize_image_with_crop_or_pad(image, crop_size, crop_size)
-  image = tf.reshape(image, [1, crop_size, crop_size, COLOR_CHAN])
   
-  image2 = tf.image.resize_image_with_crop_or_pad(image2, crop_size, crop_size)
-  image2 = tf.reshape(image2, [1, crop_size, crop_size, COLOR_CHAN])
-  
-  flo = tf.image.resize_image_with_crop_or_pad(flo, crop_size, crop_size)
-  flo = tf.reshape(flo, [1, crop_size, crop_size, 2])
-  
-  flo = tf.maximum(tf.minimum(flo, 15.0), -15.0)
-  
-  result = tf.cond(tf.reduce_max(tf.reduce_max(flo, axis=[1,2])-tf.reduce_min(flo, axis=[1,2])) < 5.0, lambda: [image[0:0], image2[0:0], flo[0:0]], 
-                   lambda: [image, image2, flo])
   
   image_batch = tf.train.shuffle_batch(
-    result,
+    [image1, image2, image3, features['file_name']],
     FLAGS.batch_size,
     num_threads=FLAGS.batch_size,
     capacity=100 * FLAGS.batch_size,
-    min_after_dequeue=1600,
-    enqueue_many=True)
+    min_after_dequeue=1600)
 
   return image_batch
 

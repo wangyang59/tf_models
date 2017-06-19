@@ -95,37 +95,43 @@ def construct_model(image1, image2, is_training=True):
       upcnv6 = resize_like(upcnv6, cnv5b)
       i6_in  = tf.concat([upcnv6, cnv5b], axis=3)
       icnv6  = slim.conv2d(i6_in, 512, [3, 3], stride=1, scope='icnv6')
+      flow6  =  slim.conv2d(icnv6, 2,   [3, 3], stride=1, 
+          activation_fn=None, normalizer_fn=None, scope='flow6')
+      flow6_up = tf.image.resize_bilinear(flow6, [np.int(H/16), np.int(W/16)])
 
       upcnv5 = slim.conv2d_transpose(icnv6, 256, [3, 3], stride=2, scope='upcnv5')
       upcnv5 = resize_like(upcnv5, cnv4b)
-      i5_in  = tf.concat([upcnv5, cnv4b], axis=3)
+      i5_in  = tf.concat([upcnv5, cnv4b, flow6_up], axis=3)
       icnv5  = slim.conv2d(i5_in, 256, [3, 3], stride=1, scope='icnv5')
-
+      flow5  =  slim.conv2d(icnv5, 2,   [3, 3], stride=1, 
+          activation_fn=None, normalizer_fn=None, scope='flow5')
+      flow5_up = tf.image.resize_bilinear(flow5, [np.int(H/8), np.int(W/8)])
+      
       upcnv4 = slim.conv2d_transpose(icnv5, 128, [3, 3], stride=2, scope='upcnv4')
-      i4_in  = tf.concat([upcnv4, cnv3b], axis=3)
+      i4_in  = tf.concat([upcnv4, cnv3b, flow5_up], axis=3)
       icnv4  = slim.conv2d(i4_in, 128, [3, 3], stride=1, scope='icnv4')
-      flow4  =  slim.conv2d(icnv4, 1,   [3, 3], stride=1, 
+      flow4  =  slim.conv2d(icnv4, 2,   [3, 3], stride=1, 
           activation_fn=None, normalizer_fn=None, scope='flow4')
       flow4_up = tf.image.resize_bilinear(flow4, [np.int(H/4), np.int(W/4)])
 
       upcnv3 = slim.conv2d_transpose(icnv4, 64,  [3, 3], stride=2, scope='upcnv3')
       i3_in  = tf.concat([upcnv3, cnv2b, flow4_up], axis=3)
       icnv3  = slim.conv2d(i3_in, 64,  [3, 3], stride=1, scope='icnv3')
-      flow3  = slim.conv2d(icnv3, 1,   [3, 3], stride=1, 
+      flow3  = slim.conv2d(icnv3, 2,   [3, 3], stride=1, 
           activation_fn=None, normalizer_fn=None, scope='flow3')
       flow3_up = tf.image.resize_bilinear(flow3, [np.int(H/2), np.int(W/2)])
 
       upcnv2 = slim.conv2d_transpose(icnv3, 32,  [3, 3], stride=2, scope='upcnv2')
       i2_in  = tf.concat([upcnv2, cnv1b, flow3_up], axis=3)
       icnv2  = slim.conv2d(i2_in, 32,  [3, 3], stride=1, scope='icnv2')
-      flow2  = slim.conv2d(icnv2, 1,   [3, 3], stride=1, 
+      flow2  = slim.conv2d(icnv2, 2,   [3, 3], stride=1, 
           activation_fn=None, normalizer_fn=None, scope='flow2')
-      flow2_up = tf.image.resize_bilinear(flow2, [H, W])
+      flow2_up = tf.image.resize_bilinear(flow2, [np.int(H), np.int(W)])
 
       upcnv1 = slim.conv2d_transpose(icnv2, 16,  [3, 3], stride=2, scope='upcnv1')
       i1_in  = tf.concat([upcnv1, flow2_up], axis=3)
       icnv1  = slim.conv2d(i1_in, 16,  [3, 3], stride=1, scope='icnv1')
-      flow1  = slim.conv2d(icnv1, 1,   [3, 3], stride=1, 
+      flow1  = slim.conv2d(icnv1, 2,   [3, 3], stride=1, 
           activation_fn=None, normalizer_fn=None, scope='flow1')
       
-      return flow1, flow2, flow3, flow4
+      return flow1, flow2, flow3, flow4, flow5, flow6

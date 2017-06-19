@@ -22,10 +22,9 @@ import tensorflow as tf
 from tensorflow.python.platform import app
 from tensorflow.python.platform import flags
 
-from prediction_input_flo_edge import build_tfrecord_input, DATA_DIR
-from prediction_input_flo_eval import build_tfrecord_input_eval
-from prediction_model_flo_edge import construct_model
-from visualize import plot_flo, plot_eval, plot_flo_edge
+from prediction_input_flo_triple2 import build_tfrecord_input, DATA_DIR
+from prediction_model_flo_learn import construct_model
+from visualize import plot_flo_triple
 from optical_flow_warp import transformer
 
 import os
@@ -157,7 +156,7 @@ def cal_grad_error(image, kernels):
   for kernel in kernels:
     shifted_image = tf.nn.depthwise_conv2d(image, tf.tile(kernel, [1, 1, color_channels, 1]), 
                                            [1, 1, 1, 1], 'SAME')
-    error += mean_L1_error(cropped_image, shifted_image[:, 1:(img_height-1), 1:(img_width-1), :])
+    error += mean_squared_error(cropped_image, shifted_image[:, 1:(img_height-1), 1:(img_width-1), :])
     
   return error / len(kernels)
 
@@ -187,26 +186,31 @@ def cal_weighted_edge_diff(image, mask, kernels, scale=1.0):
     
   return error / len(kernels)
 
-def create_flo_edge(flo, kernels):
-  batch_size, img_height, img_width, color_channels = map(int, flo.get_shape()[0:4])
+def get_grad_image(image):
+  batch_size, img_height, img_width, color_channels = map(int, image.get_shape()[0:4])
   
-  flo_shift_v = tf.nn.depthwise_conv2d(flo, tf.tile(kernels[0], [1, 1, color_channels, 1]), 
+  kernels = []
+  for i in xrange(4):
+    kernel = np.zeros((3 * 3), dtype=np.float32)
+    kernel[i*2 + 1] = 1.0
+    kernel = kernel.reshape((3, 3, 1, 1))
+    kernel = tf.constant(kernel, shape=(3, 3, 1, 1), 
+                         name='kernel_shift'+str(i), verify_shape=True)
+    kernels.append(kernel)
+  
+  image_shift_0 = tf.nn.depthwise_conv2d(image, tf.tile(kernels[0], [1, 1, color_channels, 1]), 
                                            [1, 1, 1, 1], 'SAME')
-  flo_shift_h = tf.nn.depthwise_conv2d(flo, tf.tile(kernels[1], [1, 1, color_channels, 1]), 
+  image_shift_1 = tf.nn.depthwise_conv2d(image, tf.tile(kernels[1], [1, 1, color_channels, 1]), 
+                                           [1, 1, 1, 1], 'SAME')
+  image_shift_2 = tf.nn.depthwise_conv2d(image, tf.tile(kernels[2], [1, 1, color_channels, 1]), 
+                                           [1, 1, 1, 1], 'SAME')
+  image_shift_3 = tf.nn.depthwise_conv2d(image, tf.tile(kernels[3], [1, 1, color_channels, 1]), 
                                            [1, 1, 1, 1], 'SAME')
   
-  pos = tf.constant(1.0, shape=[batch_size, img_height, img_width, 1])
-  neg = tf.constant(0.0, shape=[batch_size, img_height, img_width, 1])
+  return tf.concat([image, image-image_shift_0, image-image_shift_1, 
+                    image-image_shift_2, image-image_shift_3], axis=3)
   
-  true_edge = tf.where(tf.reduce_max(tf.concat([tf.abs(flo-flo_shift_h), tf.abs(flo-flo_shift_v)], axis=[3]), 
-                                     axis=[3], keep_dims=True)>0.5, 
-                       x=pos, y=neg)
   
-#   true_edge_h = tf.where(tf.reduce_max(tf.abs(flo-flo_shift_h), axis=[3], keep_dims=True)>0.3, x=pos, y=neg)
-#   true_edge_v = tf.where(tf.reduce_max(tf.abs(flo-flo_shift_v), axis=[3], keep_dims=True)>0.3, x=pos, y=neg)
-  
-  return true_edge
-
 def average_gradients(tower_grads):
   """Calculate the average gradient for each shared variable across all towers.
 
@@ -248,8 +252,9 @@ class Model(object):
 
   def __init__(self,
                image1=None,
-               flo=None,
-               true_edge=None,
+               image2=None,
+               image3=None,
+               file_names=None,
                reuse_scope=False,
                scope=None,
                prefix="train"):
@@ -257,67 +262,69 @@ class Model(object):
     #self.prefix = prefix = tf.placeholder(tf.string, [])
     self.iter_num = tf.placeholder(tf.float32, [])
     summaries = []
-    
     self.kernels = []
     for i in xrange(4):
       kernel = np.zeros((3 * 3), dtype=np.float32)
       kernel[i*2 + 1] = 1.0
       kernel = kernel.reshape((3, 3, 1, 1))
-      kernel = tf.constant(kernel, shape=(3, 3, 1, 1), 
+      kernel = tf.constant(kernel, shape=(3, 3, 1, 1),
                            name='kernel_shift'+str(i), verify_shape=True)
       self.kernels.append(kernel)
     
+    batch_size, H, W, color_channels = map(int, image1.get_shape()[0:4])
+    
     if not reuse_scope:
-      edge_mask = construct_model(image1)
+      flow1, flow2, flow3, flow4 = construct_model(image2, image3)
     else:  # If it's a validation or test model.
       with tf.variable_scope(scope, reuse=True):
-        edge_mask = construct_model(image1)
+        flow1, flow2, flow3, flow4 = construct_model(image2, image3)
         
-    #flo_mag = tf.sqrt(tf.square(flo[:,:,:,0:1]) + tf.square(flo[:,:,:,1:2]))
-#    true_edge_h, true_edge_v, true_edge = create_flo_edge(flo, self.kernels)
+    flow4t = transformer(flow4, flow4/8.0, [H/8, W/8])
+    flow3t = transformer(flow3, flow3/4.0, [H/4, W/4])
+    flow2t = transformer(flow2, flow2/2.0, [H/2, W/2])
+    flow1t = transformer(flow1, flow1/1.0, [H, W])
     
-    loss = -tf.reduce_mean(true_edge*tf.log(edge_mask+1e-10) + (1.0-true_edge)*tf.log(1.0-edge_mask+1e-10))
-    #loss_v = -tf.reduce_mean(true_edge_v*tf.log(edge_mask_v+1e-10) + (1.0-true_edge_v)*tf.log(1.0-edge_mask_v+1e-10))
+    image2g = get_grad_image(image2)
+    image1g = get_grad_image(image1)
+    
+    image1g_4 = transformer(tf.image.resize_bilinear(image2g, [H/8, W/8]), flow4t/8.0, [H/8, W/8])
+    loss4 = mean_squared_error(tf.image.resize_bilinear(image1g, [H/8, W/8]), image1g_4)
+    
+    image1g_3 = transformer(tf.image.resize_bilinear(image2g, [H/4, W/4]), flow3t/4.0, [H/4, W/4])
+    loss3 = mean_squared_error(tf.image.resize_bilinear(image1g, [H/4, W/4]), image1g_3)
+    
+    image1g_2 = transformer(tf.image.resize_bilinear(image2g, [H/2, W/2]), flow2t/2.0, [H/2, W/2])
+    loss2 = mean_squared_error(tf.image.resize_bilinear(image1g, [H/2, W/2]), image1g_2)
+    
+    image1g_1 = transformer(image2g, flow1t, [H, W])
+    loss1 = mean_squared_error(image1g, image1g_1)
+    
+    grad_error4 = cal_grad_error(flow4, self.kernels)
+    grad_error3 = cal_grad_error(flow3, self.kernels)
+    grad_error2 = cal_grad_error(flow2, self.kernels)
+    grad_error1 = cal_grad_error(flow1, self.kernels)
+    
+    loss = loss1 + loss2 + loss3 + loss4 + (grad_error1 + grad_error2 + grad_error3 + grad_error4)*1.0
         
     self.loss = loss
     self.orig_image1 = image1
-    self.flo = flo
-    self.true_edge = true_edge
-    self.pred_edge = edge_mask
+    self.orig_image2 = image2
+    self.orig_image3 = image3
+    self.pred_flo = flow1
+    self.pred_warp = image1g_1[:, :, :, 0:3]
+    self.file_names = file_names
         
     summaries.append(tf.summary.scalar(prefix + '_loss', self.loss))
-    
+    summaries.append(tf.summary.scalar(prefix + '_loss1', loss1))
+    summaries.append(tf.summary.scalar(prefix + '_loss2', loss2))
+    summaries.append(tf.summary.scalar(prefix + '_loss3', loss3))
+    summaries.append(tf.summary.scalar(prefix + '_loss4', loss4))
+    summaries.append(tf.summary.scalar(prefix + '_grad_loss1', grad_error1))
+    summaries.append(tf.summary.scalar(prefix + '_grad_loss2', grad_error2))
+    summaries.append(tf.summary.scalar(prefix + '_grad_loss3', grad_error3))
+    summaries.append(tf.summary.scalar(prefix + '_grad_loss4', grad_error4))
+
     self.summ_op = tf.summary.merge(summaries)
-    
-class Model_eval(object):
-
-  def __init__(self,
-               image=None,
-               mask=None,
-               scope=None):
-
-    #self.prefix = prefix = tf.placeholder(tf.string, [])
-    self.iter_num = tf.placeholder(tf.float32, [])
-    summaries = []
-    
-    self.kernels = []
-    for i in xrange(4):
-      kernel = np.zeros((3 * 3), dtype=np.float32)
-      kernel[i*2 + 1] = 1.0
-      kernel = kernel.reshape((3, 3, 1, 1))
-      kernel = tf.constant(kernel, shape=(3, 3, 1, 1), 
-                           name='kernel_shift'+str(i), verify_shape=True)
-      self.kernels.append(kernel)
-      
-    batch_size, img_height, img_width = map(int, image.get_shape()[0:3])
-    
-    with tf.variable_scope(scope, reuse=True):
-      edge_mask_h = construct_model(image)
-    
-    #self.summ_op = tf.summary.merge(summaries)
-    self.image = image
-    self.mask_true = mask
-    self.pred_edge_h = edge_mask_h
     
 def main(unused_argv):
   if FLAGS.output_dir == "":
@@ -334,14 +341,13 @@ def main(unused_argv):
     tower_grads = []
     itr_placeholders = []
     
-    image, flo, true_edge= build_tfrecord_input(training=True)
+    image1, image2, image3, file_name= build_tfrecord_input(training=True)
     
-    split_image = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=image)
-    split_flo = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=flo)
-    split_true_edge = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=true_edge)
-    
-    image_eval, mask_eval = build_tfrecord_input_eval()
-    
+    split_image1 = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=image1)
+    split_image2 = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=image2)
+    split_image3 = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=image3)
+    split_file_name = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=file_name)
+        
     summaries_cpu = tf.get_collection(tf.GraphKeys.SUMMARIES, tf.get_variable_scope().name)
 
     with tf.variable_scope(tf.get_variable_scope()) as vs:
@@ -353,15 +359,14 @@ def main(unused_argv):
             scopename = '%s_%d' % ("tower", i)
           with tf.name_scope(scopename) as ns:
             if i == 0:
-              model = Model(split_image[i], split_flo[i], split_true_edge[i], reuse_scope=False, scope=vs)
+              model = Model(split_image1[i], split_image2[i], split_image3[i], split_file_name[i], reuse_scope=False, scope=vs)
             else:
-              model = Model(split_image[i], split_flo[i], split_true_edge[i], reuse_scope=True, scope=vs)
+              model = Model(split_image1[i], split_image2[i], split_image3[i], split_file_name[i], reuse_scope=True, scope=vs)
             
             loss = model.loss
             # Retain the summaries from the final tower.
             if i == FLAGS.num_gpus - 1:
               summaries = tf.get_collection(tf.GraphKeys.SUMMARIES, ns)
-              eval_model = Model_eval(image_eval, mask_eval, scope=vs)
 
             # Calculate the gradients for the batch of data on this CIFAR tower.
             grads = train_op.compute_gradients(loss)
@@ -395,6 +400,7 @@ def main(unused_argv):
     if FLAGS.pretrained_model:
       saver.restore(sess, FLAGS.pretrained_model)
       start_itr = int(FLAGS.pretrained_model.split("/")[-1][5:])
+      sess.run(tf.local_variables_initializer())
     else:
       sess.run(tf.global_variables_initializer())
       sess.run(tf.local_variables_initializer())
@@ -410,17 +416,20 @@ def main(unused_argv):
                                       feed_dict)
     
       if (itr) % SAVE_INTERVAL == 2:
-        orig_image1, flo, true_edge, \
-        pred_edge = sess.run([model.orig_image1, 
-                              model.flo, 
-                              model.true_edge,
-                              model.pred_edge],
-                             feed_dict)
+        orig_image1, orig_image2, orig_image3, pred_flo, pred_warp, file_names = sess.run([model.orig_image1, 
+                                                    model.orig_image2, 
+                                                    model.orig_image3,
+                                                    model.pred_flo,
+                                                    model.pred_warp,
+                                                    model.file_names],
+                                                   feed_dict)
+        
+        #print(file_names)
         
         if (itr) % (SAVE_INTERVAL*10) == 2:
           tf.logging.info('Saving model.')
           saver.save(sess, FLAGS.output_dir + '/model' + str(itr))
-        plot_flo_edge(orig_image1, flo, true_edge, pred_edge,
+        plot_flo_triple(orig_image1, orig_image2, orig_image3, pred_flo, pred_warp, file_names,
                  output_dir=FLAGS.output_dir, itr=itr)
         
 #         eval_summary_str, eval_image, eval_mask_true, eval_mask_pred = sess.run([eval_model.summ_op, 

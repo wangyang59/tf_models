@@ -6,6 +6,35 @@ import matplotlib.pyplot as plt
 from flowlib import flow_to_image
 from PIL import Image
 
+def read_flow(filename):
+    """
+    read optical flow from Middlebury .flo file
+    :param filename: name of the flow file
+    :return: optical flow data in matrix
+    """
+    f = open(filename, 'rb')
+    magic = np.fromfile(f, np.float32, count=1)
+    data2d = None
+
+    if 202021.25 != magic:
+        print 'Magic number incorrect. Invalid .flo file'
+        raise ValueError
+    else:
+        w = np.fromfile(f, np.int32, count=1)[0]
+        h = np.fromfile(f, np.int32, count=1)[0]
+        #print "Reading %d x %d flo file" % (h, w)
+        data2d = np.fromfile(f, np.float32, count=2 * w * h)
+        # reshape data into 3D array (columns, rows, channels)
+        data2d = np.resize(data2d, (h, w, 2))
+    f.close()
+    return data2d
+  
+def crop_center(img,cropx,cropy):
+    y,x, _ = img.shape
+    startx = x//2-(cropx//2)
+    starty = y//2-(cropy//2)    
+    return img[starty:starty+cropy,startx:startx+cropx, :]
+
 def blow_up(kernel, size):
   kernel_h, kernel_w = kernel.shape
   img = np.zeros((size, size), dtype=np.float32)
@@ -211,7 +240,94 @@ def plot_flo_edge(image1, flo, true_edge, pred_edge,
     im = Image.fromarray(img.astype('uint8'))
 
     im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + ".jpeg"))
+    
 
+def plot_flo_learn(image1, true_flo, pred_flo, true_warp, pred_warp,
+                 output_dir, itr):
+  grey_cmap = plt.get_cmap("Greys")
+  batch_size = image1.shape[0]
+
+  h = 2
+  w = 3
+  img_size_h = image1.shape[1]
+  img_size_w = image1.shape[2]
+  gap = 3
+  
+  if not os.path.exists(os.path.join(output_dir, "itr_"+str(itr))):
+    os.makedirs(os.path.join(output_dir, "itr_"+str(itr)))
+  
+  for cnt in range(batch_size):
+    img = np.zeros((h * (img_size_h + gap), w * (img_size_w + gap), 3))
+    for idx in xrange(6):
+      i = idx % w
+      j = idx // w
+      
+      if idx == 0:
+        tmp = image1[cnt] * 255.0
+      elif idx == 1:
+        tmp = true_warp[cnt] * 255.0
+      elif idx == 2:
+        tmp = pred_warp[cnt] * 255.0
+      elif idx == 3:
+        tmp = flow_to_image(true_flo[cnt])
+      else:
+        tmp = flow_to_image(pred_flo[cnt])
+#       else:
+#         tmp = grey_cmap(occu_mask[cnt, :, :, 0])[:, :, 0:3] * 255.0
+      
+      img[j*(img_size_h+gap):j*(img_size_h+gap)+img_size_h, i*(img_size_w+gap):i*(img_size_w+gap)+img_size_w, :] = \
+          tmp
+    
+    im = Image.fromarray(img.astype('uint8'))
+
+    im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + ".jpeg"))
+
+
+def plot_flo_triple(image1, image2, image3, pred_flo, pred_warp, file_names,
+                 output_dir, itr):
+  flo_dir = "/home/wangyang59/Data/ILSVRC2016_256_flo"
+
+  batch_size = image1.shape[0]
+  h = 2
+  w = 3
+  img_size = image1.shape[1]
+  gap = 3
+  
+  if not os.path.exists(os.path.join(output_dir, "itr_"+str(itr))):
+    os.makedirs(os.path.join(output_dir, "itr_"+str(itr)))
+  
+  for cnt in range(batch_size):
+    img = np.zeros((h * (img_size + gap), w * (img_size + gap), 3))
+    file_name1, file_name2 = file_names[cnt][0].split(",")
+    
+    dir_suffix = os.path.join(file_name1.split("/")[-3], file_name1.split("/")[-2])
+    flo1 = os.path.join(flo_dir, dir_suffix, file_name1.split("/")[-1].split(".")[0] + ".flo")
+    flo2 = os.path.join(flo_dir, dir_suffix, file_name2.split("/")[-1].split(".")[0] + ".flo")
+    
+    for idx in xrange(6):
+      i = idx % w
+      j = idx // w
+      
+      if idx == 0:
+        tmp = pred_warp[cnt] * 255.0
+      elif idx == 1:
+        tmp = image2[cnt] * 255.0
+      elif idx == 2:
+        tmp = image3[cnt] * 255.0
+      elif idx == 3:
+        tmp = flow_to_image(pred_flo[cnt])
+      elif idx == 4:
+        tmp = flow_to_image(crop_center(read_flow(flo1), 256, 256))  
+      else:
+        tmp = flow_to_image(crop_center(read_flow(flo2), 256, 256)) 
+        
+      
+      img[j*(img_size+gap):j*(img_size+gap)+img_size, i*(img_size+gap):i*(img_size+gap)+img_size, :] = \
+          tmp
+    
+    im = Image.fromarray(img.astype('uint8'))
+
+    im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + ".jpeg"))
 
 def main():
   def merge(masks, batch_num, cmap):
