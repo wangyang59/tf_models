@@ -20,9 +20,9 @@ import tensorflow as tf
 from tensorflow.python.platform import app
 from tensorflow.python.platform import flags
 
-from prediction_input_flo_chair import build_tfrecord_input, DATA_DIR
+from prediction_input_flo_chair_test import build_tfrecord_input, DATA_DIR
 from prediction_model_flo_chair import construct_model
-from visualize import plot_flo_learn_symm
+from visualize import plot_flo_learn_symm, plot_flo_vis_grad, plot_flo_fullres, plot_flo_pyrimad
 from optical_flow_warp import transformer
 from optical_flow_warp_fwd import transformerFwd
 
@@ -93,8 +93,8 @@ def mean_charb_error(true, pred, beta):
   return tf.reduce_sum(tf.sqrt((tf.square(beta*(true-pred)) + 0.001*0.001))) / tf.to_float(tf.size(pred))
 
 def mean_charb_error_wmask(true, pred, mask, beta):
+  #return tf.reduce_sum(tf.sqrt((tf.square(beta*(true-pred)) + 0.001*0.001))*mask) / tf.reduce_sum(mask)
   return tf.reduce_sum(tf.sqrt((tf.square(beta*(true-pred)) + 0.001*0.001))*mask) / tf.to_float(tf.size(pred))
-
 
 def weighted_mean_squared_error(true, pred, weight):
   """L2 distance between tensors true and pred.
@@ -170,7 +170,7 @@ def img_grad_error(true, pred, mask, beta):
 def epe(flo1, flo2):
   return tf.reduce_mean(tf.sqrt(tf.reduce_sum(tf.square(flo1 - flo2), axis=3)))
 
-def blur(image):
+def down_sample(image):
   batch_size, img_height, img_width, color_channels = map(int, image.get_shape()[0:4])
   kernel = np.array([1., 2., 1., 2., 4., 2., 1., 2., 1.], dtype=np.float32) / 16.0
   kernel = kernel.reshape((3, 3, 1, 1))
@@ -179,39 +179,31 @@ def blur(image):
   
   blur_image = tf.nn.depthwise_conv2d(image, tf.tile(kernel, [1, 1, color_channels, 1]), 
                                            [1, 1, 1, 1], 'SAME')
-  return blur_image
+  return tf.image.resize_area(blur_image, [img_height/2, img_width/2])
 
-def down_sample(image):
+def down_sample_only(image):
   batch_size, img_height, img_width, color_channels = map(int, image.get_shape()[0:4])
-  blur_image = blur(image)
-  return tf.image.resize_bicubic(blur_image, [img_height/2, img_width/2])
+  return tf.image.resize_area(image, [img_height/2, img_width/2])
   
 def get_pyrimad(image):
-  batch_size, img_height, img_width, color_channels = map(int, image.get_shape()[0:4])
   image2 = down_sample(down_sample(image))
-  image3 = down_sample(image2)
-  image4 = down_sample(image3)
-  image5 = down_sample(image4)
-  image6 = down_sample(image5)
+  image3 = down_sample_only(image2)
+  image4 = down_sample_only(image3)
+  image5 = down_sample_only(image4)
+  image6 = down_sample_only(image5)
   
-#   image2 = tf.image.resize_area(image, [img_height/4, img_width/4])
-#   image3 = tf.image.resize_area(image, [img_height/8, img_width/8])
-#   image4 = tf.image.resize_area(image, [img_height/16, img_width/16])
-#   image5 = tf.image.resize_area(image, [img_height/32, img_width/32])
-#   image6 = tf.image.resize_area(image, [img_height/64, img_width/64])
   return image2, image3, image4, image5, image6
-
-def get_channel(image):
-  zeros = tf.zeros_like(image)
-  ones = tf.ones_like(image)
   
-  #gray = 0.21*image[:, :, :, 0] + 0.72*image[:, :, :, 1] + 0.07*image[:, :, :, 2]
-  channels = []
-  for i in range(10):
-    channels.append(tf.where(tf.logical_and(image >= i/10.0, image < (i+1)/10.0), ones, zeros))
+def get_pyrimad2(image):
+  batch_size, img_height, img_width, color_channels = map(int, image.get_shape()[0:4])
+  image2 = tf.image.resize_area(image, [img_height/4, img_width/4])
+  image3 = tf.image.resize_area(image, [img_height/8, img_width/8])
+  image4 = tf.image.resize_area(image, [img_height/16, img_width/16])
+  image5 = tf.image.resize_area(image, [img_height/32, img_width/32])
+  image6 = tf.image.resize_area(image, [img_height/64, img_width/64])
   
-  return tf.concat([image]+channels, axis=3)
-    
+  return image2, image3, image4, image5, image6
+  
   
 def average_gradients(tower_grads):
   """Calculate the average gradient for each shared variable across all towers.
@@ -256,6 +248,7 @@ class Model(object):
                image1=None,
                image2=None,
                true_flo=None,
+               true_flor=None,
                reuse_scope=False,
                scope=None,
                prefix="train"):
@@ -291,8 +284,8 @@ class Model(object):
                                  20*flow2r/4.0, [H/4, W/4]),
                                    clip_value_min=0.0, clip_value_max=1.0)
     
-    image1_2, image1_3, image1_4, image1_5, image1_6 = get_pyrimad(get_channel(image1))
-    image2_2, image2_3, image2_4, image2_5, image2_6 = get_pyrimad(get_channel(image2))
+    image1_2, image1_3, image1_4, image1_5, image1_6 = get_pyrimad(image1)
+    image2_2, image2_3, image2_4, image2_5, image2_6 = get_pyrimad(image2)
     
     image1_6p = transformer(image2_6, 20*flow6/64.0, [H/64, W/64])
     loss6 = mean_charb_error_wmask(image1_6, image1_6p, occu_mask_6, 1.0)
@@ -305,16 +298,16 @@ class Model(object):
     
     image1_3p = transformer(image2_3, 20*flow3/8.0, [H/8, W/8])
     loss3 = mean_charb_error_wmask(image1_3, image1_3p, occu_mask_3, 1.0)
-    
+        
     image1_2p = transformer(image2_2, 20*flow2/4.0, [H/4, W/4])
     loss2 = mean_charb_error_wmask(image1_2, image1_2p, occu_mask_2, 1.0)
     
     
-    grad_error6 = cal_grad_error(flow6, image1_6[:, :, :, 0:3], 1.0/64.0)
-    grad_error5 = cal_grad_error(flow5, image1_5[:, :, :, 0:3], 1.0/32.0)
-    grad_error4 = cal_grad_error(flow4, image1_4[:, :, :, 0:3], 1.0/16.0)
-    grad_error3 = cal_grad_error(flow3, image1_3[:, :, :, 0:3], 1.0/8.0)
-    grad_error2 = cal_grad_error(flow2, image1_2[:, :, :, 0:3], 1.0/4.0)
+    grad_error6 = cal_grad_error(flow6, image1_6, 1.0/64.0)
+    grad_error5 = cal_grad_error(flow5, image1_5, 1.0/32.0)
+    grad_error4 = cal_grad_error(flow4, image1_4, 1.0/16.0)
+    grad_error3 = cal_grad_error(flow3, image1_3, 1.0/8.0)
+    grad_error2 = cal_grad_error(flow2, image1_2, 1.0/4.0)
     
     img_grad_error6 = img_grad_error(image1_6p, image1_6, occu_mask_6, 1.0)
     img_grad_error5 = img_grad_error(image1_5p, image1_5, occu_mask_5, 1.0)
@@ -330,17 +323,39 @@ class Model(object):
            1.0*(loss4+img_grad_error4) + 1.0*(loss5+img_grad_error5) + 1.0*(loss6+img_grad_error6) + \
            (1.0*grad_error2 + 1.0*grad_error3 + 1.0*grad_error4 + 1.0*grad_error5 + 1.0*grad_error6)*10.0
            
-#    loss = 3.2*(loss2+img_grad_error2) + 0.8*(loss3+img_grad_error3) + \
-#           0.2*(loss4+img_grad_error4) + 0.1*(loss5+img_grad_error5) + 0.05*(loss6+img_grad_error6) + \
-#           (3.2*grad_error2 + 0.8*grad_error3 + 0.2*grad_error4 + 0.1*grad_error5 + 0.05*grad_error6)*10.0
+#     loss = 3.2*(loss2+img_grad_error2) + 0.8*(loss3+img_grad_error3) + \
+#            0.2*(loss4+img_grad_error4) + 0.1*(loss5+img_grad_error5) + 0.05*(loss6+img_grad_error6) + \
+#            (3.2*grad_error2 + 0.8*grad_error3 + 0.2*grad_error4 + 0.1*grad_error5 + 0.05*grad_error6)*2.0
         
     self.loss = loss
-    self.orig_image1 = image1_2[:, :, :, 0:3]
-    self.orig_image2 = image2_2[:, :, :, 0:3]
+    self.orig_image1 = image1_2
+    self.orig_image2 = image2_2
     self.true_flo = tf.image.resize_bicubic(true_flo/4.0, [H/4, W/4])
     self.pred_flo = 20*flow2 / 4.0
     self.true_warp = transformer(self.orig_image2, self.true_flo, [H/4, W/4])
-    self.pred_warp = image1_2p    
+    self.pred_warp = image1_2p   
+    self.pred_flo_r = 20*flow2r / 4.0
+    self.occu_mask = occu_mask_2
+    self.occu_mask_test = tf.clip_by_value(transformerFwd(tf.ones(shape=[batch_size, H/4, W/4, 1], dtype='float32'), 
+                                                          tf.image.resize_bicubic(true_flor/4.0, [H/4, W/4]), [H/4, W/4]),
+                                           clip_value_min=0.0, clip_value_max=1.0)
+    
+    self.orig_image1_fullres = image1
+    self.orig_image2_fullres = image2
+    self.orig_image1_warp = transformer(image2, true_flo, [H, W])
+    
+    self.image1_3 = image1_3
+    self.image2_3 = image2_3
+    self.image1_4 = image1_4
+    self.image2_4 = image2_4
+    self.image1_5 = image1_5
+    self.image2_5 = image2_5
+    self.image1_6 = image1_6
+    self.image2_6 = image2_6
+    
+    self.loss2_flow2_grad = tf.gradients(loss2, [flow2])[0]
+    self.img_grad2_flow2_grad = tf.gradients(img_grad_error2, [flow2])[0]
+    self.grad_error2_flow2_grad = tf.gradients(grad_error2, [flow2])[0]
     
     summaries.append(tf.summary.scalar(prefix + '_loss', self.loss))
     summaries.append(tf.summary.scalar(prefix + '_loss2', loss2))
@@ -353,8 +368,83 @@ class Model(object):
     summaries.append(tf.summary.scalar(prefix + '_grad_loss4', grad_error4))
     summaries.append(tf.summary.scalar(prefix + '_grad_loss5', grad_error5))
     summaries.append(tf.summary.scalar(prefix + '_grad_loss6', grad_error6))
+    summaries.append(tf.summary.scalar(prefix + '_imgGrad_loss2', img_grad_error2))
+    summaries.append(tf.summary.scalar(prefix + '_imgGrad_loss3', img_grad_error3))
+    summaries.append(tf.summary.scalar(prefix + '_imgGrad_loss4', img_grad_error4))
+    summaries.append(tf.summary.scalar(prefix + '_imgGrad_loss5', img_grad_error5))
+    summaries.append(tf.summary.scalar(prefix + '_imgGrad_loss6', img_grad_error6))
     summaries.append(tf.summary.scalar(prefix + '_flo_loss', epe(true_flo, 
                                                                  tf.image.resize_bicubic(self.pred_flo*4, [H, W]))))
+    
+    
+    flo_2, flo_3, flo_4, flo_5, flo_6 = get_pyrimad(true_flo)
+    flor_2, flor_3, flor_4, flor_5, flor_6 = get_pyrimad(true_flor)
+    
+    occu_mask_6t = tf.clip_by_value(transformerFwd(tf.ones(shape=[batch_size, H/64, W/64, 1], dtype='float32'), 
+                                 flor_6/64.0, [H/64, W/64]), 
+                                   clip_value_min=0.0, clip_value_max=1.0)
+    occu_mask_5t = tf.clip_by_value(transformerFwd(tf.ones(shape=[batch_size, H/32, W/32, 1], dtype='float32'), 
+                                 flor_5/32.0, [H/32, W/32]),
+                                   clip_value_min=0.0, clip_value_max=1.0)
+    occu_mask_4t = tf.clip_by_value(transformerFwd(tf.ones(shape=[batch_size, H/16, W/16, 1], dtype='float32'), 
+                                 flor_4/16.0, [H/16, W/16]),
+                                   clip_value_min=0.0, clip_value_max=1.0)
+    occu_mask_3t = tf.clip_by_value(transformerFwd(tf.ones(shape=[batch_size, H/8, W/8, 1], dtype='float32'), 
+                                 flor_3/8.0, [H/8, W/8]),
+                                   clip_value_min=0.0, clip_value_max=1.0)
+    occu_mask_2t = tf.clip_by_value(transformerFwd(tf.ones(shape=[batch_size, H/4, W/4, 1], dtype='float32'), 
+                                 flor_2/4.0, [H/4, W/4]),
+                                   clip_value_min=0.0, clip_value_max=1.0)
+    
+    image1_6p_t = transformer(image2_6, flo_6/64.0, [H/64, W/64])
+    loss6t = mean_charb_error_wmask(image1_6, image1_6p_t, occu_mask_6t, 1.0)
+    
+    image1_5p_t = transformer(image2_5, flo_5/32.0, [H/32, W/32])
+    loss5t = mean_charb_error_wmask(image1_5, image1_5p_t, occu_mask_5t, 1.0)
+    
+    image1_4p_t = transformer(image2_4, flo_4/16.0, [H/16, W/16])
+    loss4t = mean_charb_error_wmask(image1_4, image1_4p_t, occu_mask_4t, 1.0)
+    
+    image1_3p_t = transformer(image2_3, flo_3/8.0, [H/8, W/8])
+    loss3t = mean_charb_error_wmask(image1_3, image1_3p_t, occu_mask_3t, 1.0)
+    
+    image1_2p_t = transformer(image2_2, flo_2/4.0, [H/4, W/4])
+    loss2t = mean_charb_error_wmask(image1_2, image1_2p_t, occu_mask_2t, 1.0)
+    
+    
+    grad_error6t = cal_grad_error(flo_6/20.0, image1_6, 1.0/64.0)
+    grad_error5t = cal_grad_error(flo_5/20.0, image1_5, 1.0/32.0)
+    grad_error4t = cal_grad_error(flo_4/20.0, image1_4, 1.0/16.0)
+    grad_error3t = cal_grad_error(flo_3/20.0, image1_3, 1.0/8.0)
+    grad_error2t = cal_grad_error(flo_2/20.0, image1_2, 1.0/4.0)
+    
+    img_grad_error6t = img_grad_error(image1_6p_t, image1_6, occu_mask_6, 1.0)
+    img_grad_error5t = img_grad_error(image1_5p_t, image1_5, occu_mask_5, 1.0)
+    img_grad_error4t = img_grad_error(image1_4p_t, image1_4, occu_mask_4, 1.0)
+    img_grad_error3t = img_grad_error(image1_3p_t, image1_3, occu_mask_3, 1.0)
+    img_grad_error2t = img_grad_error(image1_2p_t, image1_2, occu_mask_2, 1.0)    
+
+    losst = 1.0*(loss2t+img_grad_error2t) + 1.0*(loss3t+img_grad_error3t) + \
+           1.0*(loss4t+img_grad_error4t) + 1.0*(loss5t+img_grad_error5t) + 1.0*(loss6t+img_grad_error6t) + \
+           (1.0*grad_error2t + 1.0*grad_error3t + 1.0*grad_error4t + 1.0*grad_error5t + 1.0*grad_error6t)*10.0
+    
+    summaries.append(tf.summary.scalar(prefix + '_losst', losst-loss))
+    summaries.append(tf.summary.scalar(prefix + '_loss2t', loss2t-loss2))
+    summaries.append(tf.summary.scalar(prefix + '_loss3t', loss3t-loss3))
+    summaries.append(tf.summary.scalar(prefix + '_loss4t', loss4t-loss4))
+    summaries.append(tf.summary.scalar(prefix + '_loss5t', loss5t-loss5))
+    summaries.append(tf.summary.scalar(prefix + '_loss6t', loss6t-loss6))
+    summaries.append(tf.summary.scalar(prefix + '_grad_loss2t', grad_error2t-grad_error2))
+    summaries.append(tf.summary.scalar(prefix + '_grad_loss3t', grad_error3t-grad_error3))
+    summaries.append(tf.summary.scalar(prefix + '_grad_loss4t', grad_error4t-grad_error4))
+    summaries.append(tf.summary.scalar(prefix + '_grad_loss5t', grad_error5t-grad_error5))
+    summaries.append(tf.summary.scalar(prefix + '_grad_loss6t', grad_error6t-grad_error6))
+    summaries.append(tf.summary.scalar(prefix + '_grad_losst', grad_error2t-grad_error2 + grad_error3t-grad_error3 + grad_error4t-grad_error4 + grad_error5t-grad_error5 + grad_error6t-grad_error6))
+    summaries.append(tf.summary.scalar(prefix + '_imgGrad_loss2t', img_grad_error2t-img_grad_error2))
+    summaries.append(tf.summary.scalar(prefix + '_imgGrad_loss3t', img_grad_error3t-img_grad_error3))
+    summaries.append(tf.summary.scalar(prefix + '_imgGrad_loss4t', img_grad_error4t-img_grad_error4))
+    summaries.append(tf.summary.scalar(prefix + '_imgGrad_loss5t', img_grad_error5t-img_grad_error5))
+    summaries.append(tf.summary.scalar(prefix + '_imgGrad_loss6t', img_grad_error6t-img_grad_error6))
     
     self.summ_op = tf.summary.merge(summaries)
 
@@ -421,14 +511,13 @@ def main(unused_argv):
     tower_grads = []
     itr_placeholders = []
     
-    image1, image2, flo= build_tfrecord_input(training=True)
+    image1, image2, flo, flor= build_tfrecord_input(training=True)
     
     split_image1 = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=image1)
     split_image2 = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=image2)
     split_flo = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=flo)
-    
-    eval_image1, eval_image2, eval_flo = build_tfrecord_input(training=False)
-        
+    split_flor = tf.split(axis=0, num_or_size_splits=FLAGS.num_gpus, value=flor)
+            
     summaries_cpu = tf.get_collection(tf.GraphKeys.SUMMARIES, tf.get_variable_scope().name)
 
     with tf.variable_scope(tf.get_variable_scope()) as vs:
@@ -440,15 +529,14 @@ def main(unused_argv):
             scopename = '%s_%d' % ("tower", i)
           with tf.name_scope(scopename) as ns:
             if i == 0:
-              model = Model(split_image1[i], split_image2[i], split_flo[i], reuse_scope=False, scope=vs)
+              model = Model(split_image1[i], split_image2[i], split_flo[i], split_flor[i], reuse_scope=False, scope=vs)
             else:
-              model = Model(split_image1[i], split_image2[i], split_flo[i], reuse_scope=True, scope=vs)
+              model = Model(split_image1[i], split_image2[i], split_flo[i], split_flor[i], reuse_scope=True, scope=vs)
             
             loss = model.loss
             # Retain the summaries from the final tower.
             if i == FLAGS.num_gpus - 1:
               summaries = tf.get_collection(tf.GraphKeys.SUMMARIES, ns)
-              eval_model = Model_eval(eval_image1, eval_image2, eval_flo, scope=vs)
             # Calculate the gradients for the batch of data on this CIFAR tower.
             grads = train_op.compute_gradients(loss)
 
@@ -497,19 +585,34 @@ def main(unused_argv):
       _, summary_str = sess.run([apply_gradient_op, summary_op],
                                       feed_dict)
       summary_writer.add_summary(summary_str, itr)
-      #sess.run(tf.local_variables_initializer())
       
       if (itr) % SAVE_INTERVAL == 2:
-        orig_image1, true_flo, pred_flo, true_warp, pred_warp, pred_flo_r, occu_mask, occu_mask_test = sess.run([eval_model.orig_image1, 
-                                                    eval_model.true_flo, 
-                                                    eval_model.pred_flo,
-                                                    eval_model.true_warp,
-                                                    eval_model.pred_warp,
-                                                    eval_model.pred_flo_r,
-                                                    eval_model.occu_mask,
-                                                    eval_model.occu_mask_test],
+        orig_image1, true_flo, pred_flo, true_warp, pred_warp, pred_flo_r, occu_mask, occu_mask_test, \
+        loss2_flow2_grad, img_grad2_flow2_grad, grad_error2_flow2_grad, \
+        orig_image1_fullres, orig_image2_fullres, orig_image1_warp, \
+        image1_3, image1_4, image1_5, image1_6, image2_3, image2_4, image2_5, image2_6 = sess.run([model.orig_image1, 
+                                                    model.true_flo, 
+                                                    model.pred_flo,
+                                                    model.true_warp,
+                                                    model.pred_warp,
+                                                    model.pred_flo_r,
+                                                    model.occu_mask,
+                                                    model.occu_mask_test,
+                                                    model.loss2_flow2_grad,
+                                                    model.img_grad2_flow2_grad,
+                                                    model.grad_error2_flow2_grad,
+                                                    model.orig_image1_fullres,
+                                                    model.orig_image2_fullres,
+                                                    model.orig_image1_warp,
+                                                    model.image1_3,
+                                                    model.image1_4,
+                                                    model.image1_5,
+                                                    model.image1_6,
+                                                    model.image2_3,
+                                                    model.image2_4,
+                                                    model.image2_5,
+                                                    model.image2_6],
                                                    feed_dict)
-        #sess.run(tf.local_variables_initializer())
         
         if (itr) % (SAVE_INTERVAL*10) == 2:
           tf.logging.info('Saving model.')
@@ -517,19 +620,12 @@ def main(unused_argv):
         
         plot_flo_learn_symm(orig_image1, true_flo, pred_flo, true_warp, pred_warp, pred_flo_r, occu_mask, occu_mask_test,
                  output_dir=FLAGS.output_dir, itr=itr)
+        plot_flo_vis_grad(true_flo, pred_flo, loss2_flow2_grad, img_grad2_flow2_grad, grad_error2_flow2_grad, 
+                          output_dir=FLAGS.output_dir, itr=itr)
+        plot_flo_fullres(orig_image1_fullres, orig_image2_fullres, orig_image1_warp, output_dir=FLAGS.output_dir, itr=itr)
+        plot_flo_pyrimad(image1_3, image1_4, image1_5, image1_6, image2_3, image2_4, image2_5, image2_6, 
+                         output_dir=FLAGS.output_dir, itr=itr)
         
-#         eval_summary_str, eval_image, eval_mask_true, eval_mask_pred = sess.run([eval_model.summ_op, 
-#                                                                                  eval_model.image, 
-#                                                                                  eval_model.mask_true, 
-#                                                                                  eval_model.mask_pred])
-#         
-#         plot_eval(eval_image, eval_mask_true, eval_mask_pred, 
-#                   output_dir=FLAGS.output_dir, itr=itr)
-          
-      if (itr) % (SUMMARY_INTERVAL) == 2:
-        eval_summary_str = sess.run(eval_model.summ_op)
-        #sess.run(tf.local_variables_initializer())
-        summary_writer.add_summary(eval_summary_str, itr)
         
     tf.logging.info('Saving model.')
     saver.save(sess, FLAGS.output_dir + '/model')

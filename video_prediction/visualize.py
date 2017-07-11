@@ -246,7 +246,7 @@ def plot_flo_learn(image1, true_flo, pred_flo, true_warp, pred_warp,
                  output_dir, itr):
   grey_cmap = plt.get_cmap("Greys")
   batch_size = image1.shape[0]
-
+  
   h = 2
   w = 3
   img_size_h = image1.shape[1]
@@ -258,7 +258,7 @@ def plot_flo_learn(image1, true_flo, pred_flo, true_warp, pred_warp,
   
   for cnt in range(batch_size):
     img = np.zeros((h * (img_size_h + gap), w * (img_size_w + gap), 3))
-    for idx in xrange(6):
+    for idx in xrange(5):
       i = idx % w
       j = idx // w
       
@@ -272,8 +272,6 @@ def plot_flo_learn(image1, true_flo, pred_flo, true_warp, pred_warp,
         tmp = flow_to_image(true_flo[cnt])
       else:
         tmp = flow_to_image(pred_flo[cnt])
-#       else:
-#         tmp = grey_cmap(occu_mask[cnt, :, :, 0])[:, :, 0:3] * 255.0
       
       img[j*(img_size_h+gap):j*(img_size_h+gap)+img_size_h, i*(img_size_w+gap):i*(img_size_w+gap)+img_size_w, :] = \
           tmp
@@ -281,6 +279,183 @@ def plot_flo_learn(image1, true_flo, pred_flo, true_warp, pred_warp,
     im = Image.fromarray(img.astype('uint8'))
 
     im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + ".jpeg"))
+    
+
+def plot_flo_learn_symm(image1, true_flo, pred_flo, true_warp, pred_warp, pred_flo_r, occu_mask, occu_mask_test,
+                 output_dir, itr):
+  grey_cmap = plt.get_cmap("Greys")
+  batch_size = image1.shape[0]
+  
+  print(np.sum(occu_mask, axis=(1, 2, 3)))
+  print(np.sum(occu_mask_test, axis=(1, 2, 3)))
+  
+  h = 3
+  w = 4
+  img_size_h = image1.shape[1]
+  img_size_w = image1.shape[2]
+  gap = 3
+  
+  if not os.path.exists(os.path.join(output_dir, "itr_"+str(itr))):
+    os.makedirs(os.path.join(output_dir, "itr_"+str(itr)))
+  
+  for cnt in range(batch_size):
+    img = np.zeros((h * (img_size_h + gap), w * (img_size_w + gap), 3))
+    for idx in xrange(11):
+      i = idx % w
+      j = idx // w
+      
+      if idx == 0:
+        tmp = image1[cnt] * 255.0
+      elif idx == 1:
+        tmp = true_warp[cnt] * 255.0
+      elif idx == 2:
+        tmp = pred_warp[cnt] * 255.0
+      elif idx == 3:
+        tmp = grey_cmap(occu_mask[cnt, :, :, 0])[:, :, 0:3] * 255.0
+      elif idx == 4:
+        tmp = flow_to_image(true_flo[cnt])
+      elif idx == 5:
+        tmp = flow_to_image(pred_flo[cnt])
+      elif idx == 6:
+        tmp = flow_to_image(pred_flo_r[cnt])
+      elif idx == 7:
+        tmp = grey_cmap(occu_mask_test[cnt, :, :, 0])[:, :, 0:3] * 255.0
+      elif idx == 8:
+        tmp = np.abs(true_warp[cnt] - image1[cnt]) * occu_mask_test[cnt] * 255.0
+      elif idx == 9:
+        tmp = np.abs(pred_warp[cnt] - image1[cnt]) * occu_mask[cnt] * 255.0
+      else:
+        tmp = np.abs(true_warp[cnt] - image1[cnt]) * 255.0
+      
+      img[j*(img_size_h+gap):j*(img_size_h+gap)+img_size_h, i*(img_size_w+gap):i*(img_size_w+gap)+img_size_w, :] = \
+          tmp
+    
+    im = Image.fromarray(img.astype('uint8'))
+
+    im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + ".jpeg"))
+    
+
+def plot_flo_vis_grad(true_flo, pred_flo, loss2_flow2_grad, img_grad2_flow2_grad, grad_error2_flow2_grad,
+                 output_dir, itr):
+  grey_cmap = plt.get_cmap("Greys")
+  batch_size = true_flo.shape[0]
+  
+  h = 2
+  w = 2
+  img_size_h = true_flo.shape[1]
+  img_size_w = true_flo.shape[2]
+  gap = 3
+  
+  if not os.path.exists(os.path.join(output_dir, "itr_"+str(itr))):
+    os.makedirs(os.path.join(output_dir, "itr_"+str(itr)))
+  
+  for cnt in range(batch_size):
+    img = np.zeros((h * (img_size_h + gap), w * (img_size_w + gap), 3))
+    for idx in xrange(4):
+      i = idx % w
+      j = idx // w
+      
+      if idx == 0:
+        tmp = flow_to_image(true_flo[cnt] - pred_flo[cnt])
+      elif idx == 1:
+        tmp = flow_to_image(loss2_flow2_grad[cnt])
+      elif idx == 2:
+        tmp = flow_to_image(img_grad2_flow2_grad[cnt])
+      else:
+        tmp = flow_to_image(grad_error2_flow2_grad[cnt])
+      
+      img[j*(img_size_h+gap):j*(img_size_h+gap)+img_size_h, i*(img_size_w+gap):i*(img_size_w+gap)+img_size_w, :] = \
+          tmp
+    
+    im = Image.fromarray(img.astype('uint8'))
+
+    im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + "_grad.jpeg"))
+
+def plot_flo_fullres(orig_image1_fullres, orig_image2_fullres, orig_image1_warp, output_dir, itr):
+  grey_cmap = plt.get_cmap("Greys")
+  batch_size = orig_image1_fullres.shape[0]
+  
+  h = 2
+  w = 2
+  img_size_h = orig_image1_fullres.shape[1]
+  img_size_w = orig_image1_fullres.shape[2]
+  gap = 3
+  
+  if not os.path.exists(os.path.join(output_dir, "itr_"+str(itr))):
+    os.makedirs(os.path.join(output_dir, "itr_"+str(itr)))
+  
+  for cnt in range(batch_size):
+    img = np.zeros((h * (img_size_h + gap), w * (img_size_w + gap), 3))
+    for idx in xrange(3):
+      i = idx % w
+      j = idx // w
+      
+      if idx == 0:
+        tmp = orig_image1_fullres[cnt] * 255.0
+      elif idx == 1:
+        tmp = orig_image2_fullres[cnt] * 255.0
+      else:
+        tmp = orig_image1_warp[cnt] * 255.0
+      
+      img[j*(img_size_h+gap):j*(img_size_h+gap)+img_size_h, i*(img_size_w+gap):i*(img_size_w+gap)+img_size_w, :] = \
+          tmp
+    
+    im = Image.fromarray(img.astype('uint8'))
+
+    im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + "_fullres.jpeg"))
+    
+    image1 = Image.fromarray((orig_image1_fullres[cnt] * 255.0).astype('uint8'))
+    image1 = image1.resize((img_size_w/4, img_size_h/4), Image.ANTIALIAS)
+    image1.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + "_resize.jpeg"))
+
+def plot_flo_pyrimad(image1_3, image1_4, image1_5, image1_6, image2_3, image2_4, image2_5, image2_6, 
+                         output_dir, itr):
+  grey_cmap = plt.get_cmap("Greys")
+  batch_size = image1_3.shape[0]
+  
+  h = 4
+  w = 2
+  img_size_h = image1_3.shape[1]
+  img_size_w = image1_3.shape[2]
+  gap = 3
+  
+  if not os.path.exists(os.path.join(output_dir, "itr_"+str(itr))):
+    os.makedirs(os.path.join(output_dir, "itr_"+str(itr)))
+  
+  for cnt in range(batch_size):
+    img = np.zeros((h * (img_size_h + gap), w * (img_size_w + gap), 3))
+    for idx in xrange(8):
+      i = idx % w
+      j = idx // w
+      
+      if idx == 0:
+        img[j*(img_size_h+gap):j*(img_size_h+gap)+img_size_h, i*(img_size_w+gap):i*(img_size_w+gap)+img_size_w, :] = \
+          image1_3[cnt] * 255.0        
+      elif idx == 1:
+        img[j*(img_size_h+gap):j*(img_size_h+gap)+img_size_h, i*(img_size_w+gap):i*(img_size_w+gap)+img_size_w, :] = \
+          image2_3[cnt] * 255.0 
+      elif idx == 2:
+        img[j*(img_size_h+gap):j*(img_size_h+gap)+img_size_h/2, i*(img_size_w+gap):i*(img_size_w+gap)+img_size_w/2, :] = \
+          image1_4[cnt] * 255.0
+      elif idx == 3:
+        img[j*(img_size_h+gap):j*(img_size_h+gap)+img_size_h/2, i*(img_size_w+gap):i*(img_size_w+gap)+img_size_w/2, :] = \
+          image2_4[cnt] * 255.0  
+      elif idx == 4:
+        img[j*(img_size_h+gap):j*(img_size_h+gap)+img_size_h/4, i*(img_size_w+gap):i*(img_size_w+gap)+img_size_w/4, :] = \
+          image1_5[cnt] * 255.0
+      elif idx == 5:
+        img[j*(img_size_h+gap):j*(img_size_h+gap)+img_size_h/4, i*(img_size_w+gap):i*(img_size_w+gap)+img_size_w/4, :] = \
+          image2_5[cnt] * 255.0
+      elif idx == 6:
+        img[j*(img_size_h+gap):j*(img_size_h+gap)+img_size_h/8, i*(img_size_w+gap):i*(img_size_w+gap)+img_size_w/8, :] = \
+          image1_6[cnt] * 255.0
+      else:
+        img[j*(img_size_h+gap):j*(img_size_h+gap)+img_size_h/8, i*(img_size_w+gap):i*(img_size_w+gap)+img_size_w/8, :] = \
+          image2_6[cnt] * 255.0
+      
+    im = Image.fromarray(img.astype('uint8'))
+
+    im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + "_pyrimad.jpeg"))
 
 
 def plot_flo_triple(image1, image2, image3, pred_flo, pred_warp, file_names,
@@ -328,6 +503,76 @@ def plot_flo_triple(image1, image2, image3, pred_flo, pred_warp, file_names,
     im = Image.fromarray(img.astype('uint8'))
 
     im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + ".jpeg"))
+    
+def plot_autoencoder(image1, image2, image1_recon, image1_recon2, image2_recon, output_dir, itr):
+  batch_size = image1.shape[0]
+  
+  h = 3
+  w = 2
+  img_size_h = image1.shape[1]
+  img_size_w = image1.shape[2]
+  gap = 3
+  
+  if not os.path.exists(os.path.join(output_dir, "itr_"+str(itr))):
+    os.makedirs(os.path.join(output_dir, "itr_"+str(itr)))
+  
+  for cnt in range(batch_size):
+    img = np.zeros((h * (img_size_h + gap), w * (img_size_w + gap), 3))
+    for idx in xrange(5):
+      i = idx % w
+      j = idx // w
+      
+      if idx == 0:
+        tmp = image1[cnt] * 255.0
+      elif idx == 1:
+        tmp = image2[cnt] * 255.0
+      elif idx == 2:
+        tmp = image1_recon[cnt] * 255.0
+      elif idx == 3:
+        tmp = image2_recon[cnt] * 255.0
+      else:
+        tmp = image1_recon2[cnt] * 255.0
+      
+      img[j*(img_size_h+gap):j*(img_size_h+gap)+img_size_h, i*(img_size_w+gap):i*(img_size_w+gap)+img_size_w, :] = \
+          tmp
+    
+    im = Image.fromarray(img.astype('uint8'))
+
+    im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + "_recon.jpeg"))
+    
+
+def plot_general(images, h, w, output_dir, itr, suffix=""):
+  grey_cmap = plt.get_cmap("Greys")
+  batch_size = images[0].shape[0]
+  img_size_h = images[0].shape[1]
+  img_size_w = images[0].shape[2]
+
+  gap = 3
+  
+  if not os.path.exists(os.path.join(output_dir, "itr_"+str(itr))):
+    os.makedirs(os.path.join(output_dir, "itr_"+str(itr)))
+  
+  for cnt in range(batch_size):
+    img = np.zeros((h * (img_size_h + gap), w * (img_size_w + gap), 3))
+    for idx in xrange(len(images)):
+      i = idx % w
+      j = idx // w
+      
+      image = images[idx]
+      
+      if image.shape[3] == 1:
+        tmp = grey_cmap(image[cnt, :, :, 0])[:, :, 0:3] * 255.0
+      elif image.shape[3] == 2:
+        tmp = flow_to_image(image[cnt])
+      else:
+        tmp = image[cnt] * 255.0
+      
+      img[j*(img_size_h+gap):j*(img_size_h+gap)+image.shape[1], i*(img_size_w+gap):i*(img_size_w+gap)+image.shape[2], :] = \
+          tmp
+    
+    im = Image.fromarray(img.astype('uint8'))
+
+    im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + "_" + suffix + ".jpeg"))
 
 def main():
   def merge(masks, batch_num, cmap):

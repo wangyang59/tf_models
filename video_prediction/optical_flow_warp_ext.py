@@ -16,7 +16,7 @@ import tensorflow as tf
 from tensorflow.python.platform import app
 import numpy as np
 
-def transformerFwd(U, flo, out_size, name='SpatialTransformerFwd', **kwargs):
+def transformer(U, flo, out_size, name='SpatialTransformer', **kwargs):
     """Spatial Transformer Layer
 
     Implements a spatial transformer layer as described in [1]_.
@@ -83,67 +83,50 @@ def transformerFwd(U, flo, out_size, name='SpatialTransformerFwd', **kwargs):
             
             # do sampling
             x0 = tf.cast(tf.floor(x), 'int32')
-            x1 = x0 + 1
             y0 = tf.cast(tf.floor(y), 'int32')
-            y1 = y0 + 1
             
-            x0_c = tf.clip_by_value(x0, zero, max_x)
-            x1_c = tf.clip_by_value(x1, zero, max_x)
-            y0_c = tf.clip_by_value(y0, zero, max_y)
-            y1_c = tf.clip_by_value(y1, zero, max_y)
+            xs = [x0 + i for i in range(-1, 3)]
+            ys = [y0 + i for i in range(-1, 3)]
+            
+            xs_c = [tf.clip_by_value(xx, zero, max_x) for xx in xs]
+            ys_c = [tf.clip_by_value(yy, zero, max_y) for yy in ys]
             
             dim2 = width
             dim1 = width*height
             base = _repeat(tf.range(num_batch)*dim1, out_height*out_width)
             
-            base_y0 = base + y0_c*dim2
-            base_y1 = base + y1_c*dim2
-            idx_a = base_y0 + x0_c
-            idx_b = base_y1 + x0_c
-            idx_c = base_y0 + x1_c
-            idx_d = base_y1 + x1_c
-
+            base_ys = [base + yy_c*dim2 for yy_c in ys_c]
+            Ia, Ib, Ic, Id = 0.0, 0.0, 0.0, 0.0
+            
             # use indices to lookup pixels in the flat image and restore
             # channels dim
             im_flat = tf.reshape(im, tf.stack([-1, channels]))
             im_flat = tf.cast(im_flat, 'float32')
-#             Ia = tf.gather(im_flat, idx_a)
-#             Ib = tf.gather(im_flat, idx_b)
-#             Ic = tf.gather(im_flat, idx_c)
-#             Id = tf.gather(im_flat, idx_d)
+            
+            for i in range(4):
+              for j in range(4):
+                idx = base_ys[i] + xs_c[j]
+                if i<2 and j<2:
+                  Ia += tf.gather(im_flat, idx)*0.25
+                elif i>=2 and j<2:
+                  Ib += tf.gather(im_flat, idx)*0.25
+                elif i<2 and j>=2:
+                  Ic += tf.gather(im_flat, idx)*0.25
+                else:
+                  Id += tf.gather(im_flat, idx)*0.25
             
             # and finally calculate interpolated values
             x0_f = tf.cast(x0, 'float32')
-            x1_f = tf.cast(x1, 'float32')
+            x1_f = tf.cast(x0+1, 'float32')
             y0_f = tf.cast(y0, 'float32')
-            y1_f = tf.cast(y1, 'float32')
+            y1_f = tf.cast(y0+1, 'float32')
             wa = tf.expand_dims(((x1_f-x) * (y1_f-y)), 1)
             wb = tf.expand_dims(((x1_f-x) * (y-y0_f)), 1)
             wc = tf.expand_dims(((x-x0_f) * (y1_f-y)), 1)
             wd = tf.expand_dims(((x-x0_f) * (y-y0_f)), 1)
-            
-            zerof = tf.zeros_like(wa)
-            
-            wa = tf.where(tf.logical_and(tf.equal(x1_c, x1), tf.equal(y1_c, y1)), wa, zerof)
-            wb = tf.where(tf.logical_and(tf.equal(x1_c, x1), tf.equal(y0_c, y0)), wb, zerof)
-            wc = tf.where(tf.logical_and(tf.equal(x0_c, x0), tf.equal(y1_c, y1)), wc, zerof)
-            wd = tf.where(tf.logical_and(tf.equal(x0_c, x0), tf.equal(y0_c, y0)), wd, zerof)
-            
-            zeros = tf.zeros(shape=[int(im.get_shape()[0])*int(im.get_shape()[1])*int(im.get_shape()[2]), int(im.get_shape()[3])], 
-                                          dtype='float32')
-            output = tf.Variable(zeros, 
-                                 trainable=False,
-                                 collections=[tf.GraphKeys.LOCAL_VARIABLES])
-            init = tf.assign(output, zeros)
-            
-            with tf.control_dependencies([init]):
-              output = tf.scatter_add(output, idx_a, im_flat*wa)
-              output = tf.scatter_add(output, idx_b, im_flat*wb)
-              output = tf.scatter_add(output, idx_c, im_flat*wc)
-              output = tf.scatter_add(output, idx_d, im_flat*wd)
-                        
+            output = tf.add_n([wa*Ia, wb*Ib, wc*Ic, wd*Id])
             return output
-          
+
     def _meshgrid(height, width):
         with tf.variable_scope('_meshgrid'):
             # This should be equivalent to:
@@ -170,21 +153,21 @@ def transformerFwd(U, flo, out_size, name='SpatialTransformerFwd', **kwargs):
             width_f = tf.cast(width, 'float32')
             out_height = out_size[0]
             out_width = out_size[1]
-            x_s, y_s = _meshgrid(out_height, out_width)
-            x_s = tf.expand_dims(x_s, 0)
-            x_s = tf.tile(x_s, [num_batch, 1, 1])
+            x_t, y_t = _meshgrid(out_height, out_width)
+            x_t = tf.expand_dims(x_t, 0)
+            x_t = tf.tile(x_t, [num_batch, 1, 1])
             
-            y_s = tf.expand_dims(y_s, 0)
-            y_s = tf.tile(y_s, [num_batch, 1, 1])
+            y_t = tf.expand_dims(y_t, 0)
+            y_t = tf.tile(y_t, [num_batch, 1, 1])
             
-            x_t = x_s + flo[:, :, :, 0] / ((out_width-1.0) / 2.0)
-            y_t = y_s + flo[:, :, :, 1] / ((out_height-1.0) / 2.0)
+            x_s = x_t + flo[:, :, :, 0] / ((out_width-1.0) / 2.0)
+            y_s = y_t + flo[:, :, :, 1] / ((out_height-1.0) / 2.0)
             
-            x_t_flat = tf.reshape(x_t, [-1])
-            y_t_flat = tf.reshape(y_t, [-1])
+            x_s_flat = tf.reshape(x_s, [-1])
+            y_s_flat = tf.reshape(y_s, [-1])
 
             input_transformed = _interpolate(
-                input_dim, x_t_flat, y_t_flat,
+                input_dim, x_s_flat, y_s_flat,
                 out_size)
 
             output = tf.reshape(
@@ -201,33 +184,16 @@ def main(unused_argv):
           allow_soft_placement=True,
           log_device_placement=False))
   
-#   image = tf.constant([1,2,3,4,5,6,7,8,9], shape=[1, 3, 3, 1], dtype="float32")
-# 
-#   flo = np.zeros((1, 3, 3, 2))
-#   flo[0, 1, 1, 0] = 1.0
-#   #flo[0, 1, 1, 1] = 1.0
-#   flo = tf.constant(flo, dtype="float32")
-#   
-#   image2 = transformerFwd(image, flo, [3, 3])
-#   sess.run(tf.global_variables_initializer())
-#   print(image2.eval(session=sess))
-  
-  zeros = tf.zeros(shape=[10, 3], dtype='float32')
-  output = tf.Variable(zeros, 
-                       trainable=False,
-                       collections=[tf.GraphKeys.LOCAL_VARIABLES])
-  init = tf.assign(output, zeros)
-  x = tf.placeholder(tf.float32, shape=(3, 3))
-  with tf.control_dependencies([init]):
-    for j in range(10000):
-      output = tf.scatter_add(output, 
-                              tf.constant([1,3,4], dtype="int32", shape=[3]), 
-                              x)
+  image = tf.constant([1,2,3,4,5,6,7,8,9], shape=[1, 3, 3, 1], dtype="float32")
 
-  result = output * 2   
-  for i in range(5):
-    x_val = np.array(range(9)).reshape([3,3]) * i
-    print(sess.run(result, feed_dict={x: x_val}))
+  flo = np.zeros((1, 3, 3, 2))
+  flo[0, 1, 1, 0] = 1.0
+  #flo[0, 1, 1, 1] = 1.0
+  flo = tf.constant(flo, dtype="float32")
+  
+  image2 = transformer(image, flo, [3, 3])
+  
+  print(image2.eval(session=sess))
   
 if __name__ == '__main__':
   app.run()
