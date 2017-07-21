@@ -159,47 +159,47 @@ def construct_model(image1, image2, image1_pyrimad, image2_pyrimad, is_training=
       
       flow6  =  slim.conv2d(cnv6b, 2, [3, 3], stride=1, 
           activation_fn=None, normalizer_fn=None, scope='flow6')
-      image1_6p = transformer(image2_6, 20*flow6/64.0, [H/64, W/64])
+      image1_6p = transformer(image2_6, 20*flow6/64.0, [H/64, W/64], image1_6)
       
       deconv5 = slim.conv2d_transpose(cnv6b, 512, [4, 4], stride=2, scope='deconv5', weights_regularizer=None)
       flow6to5 = tf.image.resize_bilinear(flow6, [H/(2**5), (W/(2**5))])
-      feature6to5 = tf.image.resize_bilinear(tf.concat([image1_6, image2_6, image1_6p, image1_6-image1_6p], axis=3), [H/(2**5), W/(2**5)])
+      feature6to5 = tf.image.resize_bilinear(tf.concat([image1_6[:,:,:,0:3], image2_6[:,:,:,0:3], image1_6p[:,:,:,0:3], image1_6[:,:,:,0:3]-image1_6p[:,:,:,0:3]], axis=3), [H/(2**5), W/(2**5)])
       feature6to5.set_shape([batch_size, H/(2**5), W/(2**5), color_channels*4])
       
       concat5 = tf.concat([cnv5b, deconv5, sub_model(feature6to5, level=5)], axis=3)
       flow5 = slim.conv2d(concat5, 2, [3, 3], stride=1, 
           activation_fn=None, normalizer_fn=None, scope='flow5') + flow6to5
-      image1_5p = transformer(image2_5, 20*flow5/32.0, [H/32, W/32])
+      image1_5p = transformer(image2_5, 20*flow5/32.0, [H/32, W/32], image1_5)
       
       deconv4 = slim.conv2d_transpose(concat5, 256, [4, 4], stride=2, scope='deconv4', weights_regularizer=None)
       flow5to4 = tf.image.resize_bilinear(flow5, [H/(2**4), (W/(2**4))])
-      feature5to4 = tf.image.resize_bilinear(tf.concat([image1_5, image2_5, image1_5p, image1_5-image1_5p], axis=3), [H/(2**4), (W/(2**4))])
+      feature5to4 = tf.image.resize_bilinear(tf.concat([image1_5[:,:,:,0:3], image2_5[:,:,:,0:3], image1_5p[:,:,:,0:3], image1_5[:,:,:,0:3]-image1_5p[:,:,:,0:3]], axis=3), [H/(2**4), (W/(2**4))])
       feature5to4.set_shape([batch_size, H/(2**4), W/(2**4), color_channels*4])
       
       concat4 = tf.concat([cnv4b, deconv4, sub_model(feature5to4, level=4)], axis=3)
       flow4 = slim.conv2d(concat4, 2, [3, 3], stride=1, 
           activation_fn=None, normalizer_fn=None, scope='flow4') + flow5to4
-      image1_4p = transformer(image2_4, 20*flow4/16.0, [H/16, W/16])
+      image1_4p = transformer(image2_4, 20*flow4/16.0, [H/16, W/16], image1_4)
       
       deconv3 = slim.conv2d_transpose(concat4, 128, [4, 4], stride=2, scope='deconv3', weights_regularizer=None)
       flow4to3 = tf.image.resize_bilinear(flow4, [H/(2**3), (W/(2**3))])
-      feature4to3 = tf.image.resize_bilinear(tf.concat([image1_4, image2_4, image1_4p, image1_4-image1_4p], axis=3), [H/(2**3), (W/(2**3))])
+      feature4to3 = tf.image.resize_bilinear(tf.concat([image1_4[:,:,:,0:3], image2_4[:,:,:,0:3], image1_4p[:,:,:,0:3], image1_4[:,:,:,0:3]-image1_4p[:,:,:,0:3]], axis=3), [H/(2**3), (W/(2**3))])
       feature4to3.set_shape([batch_size, H/(2**3), W/(2**3), color_channels*4])
       
       concat3 = tf.concat([cnv3b, deconv3, sub_model(feature4to3, level=3)], axis=3)
       flow3 = slim.conv2d(concat3, 2, [3, 3], stride=1, 
           activation_fn=None, normalizer_fn=None, scope='flow3') + flow4to3
-      image1_3p = transformer(image2_3, 20*flow3/8.0, [H/8, W/8])
+      image1_3p = transformer(image2_3, 20*flow3/8.0, [H/8, W/8], image1_3)
 
       deconv2 = slim.conv2d_transpose(concat3, 64, [4, 4], stride=2, scope='deconv2', weights_regularizer=None)
       flow3to2 = tf.image.resize_bilinear(flow3, [H/(2**2), (W/(2**2))])
-      feature3to2 = tf.image.resize_bilinear(tf.concat([image1_3, image2_3, image1_3p, image1_3-image1_3p], axis=3), [H/(2**2), (W/(2**2))])
+      feature3to2 = tf.image.resize_bilinear(tf.concat([image1_3[:,:,:,0:3], image2_3[:,:,:,0:3], image1_3p[:,:,:,0:3], image1_3[:,:,:,0:3]-image1_3p[:,:,:,0:3]], axis=3), [H/(2**2), (W/(2**2))])
       feature3to2.set_shape([batch_size, H/(2**2), W/(2**2), color_channels*4])
       
       concat2 = tf.concat([cnv2, deconv2, sub_model(feature3to2, level=2)], axis=3)
       flow2 = slim.conv2d(concat2, 2, [3, 3], stride=1, 
           activation_fn=None, normalizer_fn=None, scope='flow2') + flow3to2
       
-      image1_2p = transformer(image2_2, 20*flow2/4.0, [H/4, W/4])
+      image1_2p = transformer(image2_2, 20*flow2/4.0, [H/4, W/4], image1_2)
       
       return flow2, flow3, flow4, flow5, flow6, [image1_2p, image1_3p, image1_4p, image1_5p, image1_6p]

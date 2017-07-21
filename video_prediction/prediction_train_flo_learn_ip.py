@@ -22,7 +22,7 @@ from tensorflow.python.platform import flags
 
 from prediction_input_flo_chair import build_tfrecord_input, DATA_DIR
 from prediction_model_flo_chair_ip import construct_model, autoencoder, decoder
-from visualize import plot_flo_learn_symm, plot_autoencoder
+from visualize import plot_flo_learn_symm, plot_general
 from optical_flow_warp import transformer
 from optical_flow_warp_fwd import transformerFwd
 
@@ -148,8 +148,8 @@ def cal_grad_error(flo, image, beta):
   img_grad_x = gradient_x(image)
   img_grad_y = gradient_y(image)
   
-  weights_x = tf.exp(-5.0*tf.reduce_mean(tf.abs(img_grad_x), 3, keep_dims=True))
-  weights_y = tf.exp(-5.0*tf.reduce_mean(tf.abs(img_grad_y), 3, keep_dims=True))
+  weights_x = tf.exp(-10.0*tf.reduce_mean(tf.abs(img_grad_x), 3, keep_dims=True))
+  weights_y = tf.exp(-10.0*tf.reduce_mean(tf.abs(img_grad_y), 3, keep_dims=True))
   
   error += mean_charb_error_wmask(flo[:, 1:, :, :], flo[:, :-1, :, :], weights_y, beta)
   error += mean_charb_error_wmask(flo[:, :, 1:, :], flo[:, :, :-1, :], weights_x, beta)
@@ -187,7 +187,6 @@ def down_sample(image):
   return tf.image.resize_bicubic(blur_image, [img_height/2, img_width/2])
   
 def get_pyrimad(image):
-  batch_size, img_height, img_width, color_channels = map(int, image.get_shape()[0:4])
   image2 = down_sample(down_sample(image))
   image3 = down_sample(image2)
   image4 = down_sample(image3)
@@ -266,8 +265,8 @@ class Model(object):
     
     batch_size, H, W, color_channels = map(int, image1.get_shape()[0:4])
     
-    image1_pyrimad = get_pyrimad(image1)
-    image2_pyrimad = get_pyrimad(image2)
+    image1_pyrimad = get_pyrimad(get_channel(image1))
+    image2_pyrimad = get_pyrimad(get_channel(image2))
     
     image1_2, image1_3, image1_4, image1_5, image1_6 = image1_pyrimad
     image2_2, image2_3, image2_4, image2_5, image2_6 = image2_pyrimad
@@ -305,11 +304,11 @@ class Model(object):
     loss3 = mean_charb_error_wmask(image1_3, image1_3p, occu_mask_3, 1.0)
     loss2 = mean_charb_error_wmask(image1_2, image1_2p, occu_mask_2, 1.0)
      
-    grad_error6 = cal_grad_error(flow6, image1_6, 1.0/64.0)
-    grad_error5 = cal_grad_error(flow5, image1_5, 1.0/32.0)
-    grad_error4 = cal_grad_error(flow4, image1_4, 1.0/16.0)
-    grad_error3 = cal_grad_error(flow3, image1_3, 1.0/8.0)
-    grad_error2 = cal_grad_error(flow2, image1_2, 1.0/4.0)
+    grad_error6 = cal_grad_error(flow6, image1_6[:,:,:,0:3], 1.0/64.0)
+    grad_error5 = cal_grad_error(flow5, image1_5[:,:,:,0:3], 1.0/32.0)
+    grad_error4 = cal_grad_error(flow4, image1_4[:,:,:,0:3], 1.0/16.0)
+    grad_error3 = cal_grad_error(flow3, image1_3[:,:,:,0:3], 1.0/8.0)
+    grad_error2 = cal_grad_error(flow2, image1_2[:,:,:,0:3], 1.0/4.0)
      
     img_grad_error6 = img_grad_error(image1_6p, image1_6, occu_mask_6, 1.0)
     img_grad_error5 = img_grad_error(image1_5p, image1_5, occu_mask_5, 1.0)
@@ -318,39 +317,25 @@ class Model(object):
     img_grad_error2 = img_grad_error(image1_2p, image1_2, occu_mask_2, 1.0)
     
     
-    #loss6f = mean_charb_error_wmask(feature1[4], feature1_6p, occu_mask_6, 1.0)
-     
-    #feature1_5p = transformer(feature2[3], 20*flow5/32.0, [H/32, W/32])
-    #loss5f = mean_charb_error_wmask(feature1[3], feature1_5p, occu_mask_5, 1.0)
-     
-    #feature1_4p = transformer(feature2[2], 20*flow4/16.0, [H/16, W/16])
-    #loss4f = mean_charb_error_wmask(feature1[2], feature1_4p, occu_mask_4, 1.0)
-     
-    #feature1_3p = transformer(feature2[1], 20*flow3/8.0, [H/8, W/8])
-    #loss3f = mean_charb_error_wmask(feature1[1], feature1_3p, occu_mask_3, 1.0)
-     
-    #feature1_2p = transformer(feature2[0], 20*flow2/4.0, [H/4, W/4])
-    #loss2f = mean_charb_error_wmask(feature1[0], feature1_2p, occu_mask_2, 1.0)
-    
-#     loss = 0.05*(loss2+img_grad_error2) + 0.1*(loss3+img_grad_error3) + \
-#            0.2*(loss4+img_grad_error4) + 0.8*(loss5+img_grad_error5) + 3.2*(loss6+img_grad_error6) + \
-#            (0.05*grad_error2 + 0.1*grad_error3 + 0.2*grad_error4 + 0.8*grad_error5 + 3.2*grad_error6)*2.0
+#    loss = 0.05*(loss2+img_grad_error2) + 0.1*(loss3+img_grad_error3) + \
+#           0.2*(loss4+img_grad_error4) + 0.8*(loss5+img_grad_error5) + 3.2*(loss6+img_grad_error6) + \
+#           (0.05*grad_error2 + 0.1*grad_error3 + 0.2*grad_error4 + 0.0*grad_error5 + 0.0*grad_error6)*10.0
  
     loss = 1.0*(loss2+img_grad_error2) + 1.0*(loss3+img_grad_error3) + \
            1.0*(loss4+img_grad_error4) + 1.0*(loss5+img_grad_error5) + 1.0*(loss6+img_grad_error6) + \
-           (1.0*grad_error2 + 1.0*grad_error3 + 1.0*grad_error4 + 1.0*grad_error5 + 1.0*grad_error6)*5.0
+           (1.0*grad_error2 + 1.0*grad_error3 + 1.0*grad_error4 + 1.0*grad_error5 + 1.0*grad_error6)*10.0
             
 #    loss = 3.2*(loss2+img_grad_error2) + 0.8*(loss3+img_grad_error3) + \
 #           0.2*(loss4+img_grad_error4) + 0.1*(loss5+img_grad_error5) + 0.05*(loss6+img_grad_error6) + \
 #           (3.2*grad_error2 + 0.8*grad_error3 + 0.2*grad_error4 + 0.1*grad_error5 + 0.05*grad_error6)*10.0
          
     self.loss = loss
-    self.orig_image1 = image1_2
-    self.orig_image2 = image2_2
+    self.orig_image1 = image1_2[:,:,:,0:3]
+    self.orig_image2 = image2_2[:,:,:,0:3]
     self.true_flo = tf.image.resize_bicubic(true_flo/4.0, [H/4, W/4])
     self.pred_flo = 20*flow2 / 4.0
-    self.true_warp = transformer(self.orig_image2, self.true_flo, [H/4, W/4])
-    self.pred_warp = image1_2p    
+    self.true_warp = transformer(self.orig_image2, self.true_flo, [H/4, W/4], image1_2[:,:,:,0:3])
+    self.pred_warp = image1_2p[:,:,:,0:3]    
     self.pred_flo_r = 20*flow2r / 4.0
     self.occu_mask = occu_mask_2
     self.occu_mask_test = tf.clip_by_value(transformerFwd(tf.ones(shape=[batch_size, H/4, W/4, 1], dtype='float32'), 
@@ -387,8 +372,8 @@ class Model_eval(object):
     summaries = []
     
     batch_size, H, W, color_channels = map(int, image1.get_shape()[0:4])
-    image1_pyrimad = get_pyrimad(image1)
-    image2_pyrimad = get_pyrimad(image2)
+    image1_pyrimad = get_pyrimad(get_channel(image1))
+    image2_pyrimad = get_pyrimad(get_channel(image2))
     
     image1_2, image1_3, image1_4, image1_5, image1_6 = image1_pyrimad
     image2_2, image2_3, image2_4, image2_5, image2_6 = image2_pyrimad
@@ -404,14 +389,12 @@ class Model_eval(object):
                                  20*flow2r/4.0, [H/4, W/4]),
                                    clip_value_min=0.0, clip_value_max=1.0)
        
-    image1_2p = transformer(image2_2, 20*flow2/4.0, [H/4, W/4])
-
-    self.orig_image1 = image1_2
-    self.orig_image2 = image2_2
+    self.orig_image1 = image1_2[:,:,:,0:3]
+    self.orig_image2 = image2_2[:,:,:,0:3]
     self.true_flo = tf.image.resize_bicubic(true_flo/4.0, [H/4, W/4])
     self.pred_flo = 20*flow2 / 4.0
-    self.true_warp = transformer(self.orig_image2, self.true_flo, [H/4, W/4])
-    self.pred_warp = image1_2p
+    self.true_warp = transformer(self.orig_image2, self.true_flo, [H/4, W/4], image1_2[:,:,:,0:3])
+    self.pred_warp = image1_2p[:,:,:,0:3]
     self.pred_flo_r = 20*flow2r / 4.0
     self.occu_mask = occu_mask_2
     self.occu_mask_test = tf.clip_by_value(transformerFwd(tf.ones(shape=[batch_size, H/4, W/4, 1], dtype='float32'), 
@@ -421,21 +404,28 @@ class Model_eval(object):
     self.epe = cal_epe(true_flo, tf.image.resize_bicubic(20*flow2, [H, W]))
     summaries.append(tf.summary.scalar(prefix + '_flo_loss', self.epe))
     
+    self.small_scales = [image1_5[:,:,:,0:3], image2_5[:,:,:,0:3], image1_5p[:,:,:,0:3], 
+                         tf.image.resize_bicubic(true_flo/32.0, [H/32, W/32]), 20*flow5/32.0, tf.image.resize_bicubic(true_flo/32.0, [H/32, W/32])-20*flow5/32.0,
+                         image1_6[:,:,:,0:3], image2_6[:,:,:,0:3], image1_6p[:,:,:,0:3],
+                         tf.image.resize_bicubic(true_flo/64.0, [H/64, W/64]), 20*flow6/64.0, tf.image.resize_bicubic(true_flo/64.0, [H/64, W/64])-20*flow6/64.0]
+    
     self.summ_op = tf.summary.merge(summaries)
 
 def plot_all(model, itr, sess, feed_dict):
-  orig_image1, true_flo, pred_flo, true_warp, pred_warp, pred_flo_r, occu_mask, occu_mask_test  = sess.run([model.orig_image1, 
+  orig_image1, true_flo, pred_flo, true_warp, pred_warp, pred_flo_r, occu_mask, occu_mask_test, small_scales  = sess.run([model.orig_image1, 
                                               model.true_flo, 
                                               model.pred_flo,
                                               model.true_warp,
                                               model.pred_warp,
                                               model.pred_flo_r,
                                               model.occu_mask,
-                                              model.occu_mask_test],
+                                              model.occu_mask_test,
+                                              model.small_scales],
                                              feed_dict)
   
   plot_flo_learn_symm(orig_image1, true_flo, pred_flo, true_warp, pred_warp, pred_flo_r, occu_mask, occu_mask_test,
            output_dir=FLAGS.output_dir, itr=itr)
+  plot_general(small_scales, h=4, w=3, output_dir=FLAGS.output_dir, itr=itr, suffix="small")
 
 def main(unused_argv):
   if FLAGS.output_dir == "":

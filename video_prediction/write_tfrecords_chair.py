@@ -46,10 +46,9 @@ def convert_to(input_tuple):
   print('Writing', out_name)
   
   for file_name in file_names:
-    image1_file = file_name + "_img1.ppm"
-    image2_file = file_name + "_img2.ppm"
+    image1_file = file_name + "_img1.jpeg"
+    image2_file = file_name + "_img2.jpeg"
     flo_file = file_name + "_flow.flo"
-    flor_file = file_name + "_flowr.flo"
     
     im = Image.open(image1_file)
     output = StringIO.StringIO()
@@ -64,29 +63,27 @@ def convert_to(input_tuple):
     output.close()
     
     flo = read_flow(flo_file)
-    flor = read_flow(flor_file)
         
     example = tf.train.Example(features=tf.train.Features(feature={
         'image1_raw': _bytes_feature(image1_raw),
         'image2_raw': _bytes_feature(image2_raw),
-        'flo': _bytes_feature(flo.tostring()),
-        'flor': _bytes_feature(flor.tostring())}))
+        'flo': _bytes_feature(flo.tostring())}))
     writer.write(example.SerializeToString())
   writer.close()  
 
 def main(unused_argv):
   data_dir = "/home/wangyang59/Data/FlyingChairs_release/data"
   
-  image_files = sorted(set([file.split("_")[0] for file in os.listdir(data_dir)]))[0:2000]  
+  image_files = sorted(set([file.split("_")[0] for file in os.listdir(data_dir)]))
   image_files = [os.path.join(data_dir, image_file) for image_file in image_files]
   
   n = len(image_files)
   print(n)
-  batch_size = 256
+  batch_size = 512
   inputs = []
   
   for i in range(n/batch_size):
-    output_file = "/home/wangyang59/Data/ILSVRC2016_tf_chair_test/%s.tfrecord" % i
+    output_file = "/home/wangyang59/Data/ILSVRC2016_tf_chair_hist/%s.tfrecord" % i
     inputs.append((output_file, image_files[i*batch_size:(i+1)*batch_size]))
     
   pool = multiprocessing.Pool(20)

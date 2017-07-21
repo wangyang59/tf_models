@@ -23,7 +23,7 @@ import tensorflow as tf
 from tensorflow.python.platform import flags
 from tensorflow.python.platform import gfile
 
-DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf_chair'
+DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf_chair_hist'
 #DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf_stab/train'
 FLAGS = flags.FLAGS
 
@@ -57,7 +57,7 @@ def augment_image_pair(left_image, right_image):
   left_image_aug  = tf.clip_by_value(left_image_aug,  0, 1)
   right_image_aug = tf.clip_by_value(right_image_aug, 0, 1)
 
-  return [left_image_aug, right_image_aug]
+  return left_image_aug, right_image_aug
 
 def build_tfrecord_input(training=True, blacklist=[], num_epochs=None):
   """Create input tfrecord tensors.
@@ -111,7 +111,7 @@ def build_tfrecord_input(training=True, blacklist=[], num_epochs=None):
     image1, image2 =  tf.split(axis=2, num_or_size_splits=2, value=images)
     
     image1, image2 = tf.cond(tf.random_uniform([]) < 0.5, lambda: [image1, image2], lambda: [image2, image1])
-    image1, image2 = tf.cond(tf.random_uniform([]) < 0.5, lambda: [image1, image2], lambda: augment_image_pair(image1, image2))
+    #image1, image2 = tf.cond(tf.random_uniform([]) < 0.5, lambda: [image1, image2], lambda: augment_image_pair(image1, image2))
 
   
   if training:
