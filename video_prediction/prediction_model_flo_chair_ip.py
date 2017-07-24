@@ -39,6 +39,8 @@ def leaky_relu(_x, alpha=0.1):
   return pos + neg
 
 def autoencoder(image, reuse_scope=False, trainable=True):
+  batch_size, H, W, color_channels = map(int, image.get_shape()[0:4])
+  
   with slim.arg_scope([slim.conv2d, slim.conv2d_transpose],
                       #normalizer_fn=slim.batch_norm,
                       #normalizer_params=batch_norm_params,
@@ -47,23 +49,35 @@ def autoencoder(image, reuse_scope=False, trainable=True):
                       reuse=reuse_scope,
                       trainable=trainable,
                       variables_collections=["ae"]):
-    cnv1  = slim.conv2d(image, 16,  [3, 3], stride=2, scope='cnv1_ae')
-    cnv2  = slim.conv2d(cnv1, 32,  [3, 3], stride=2, scope='cnv2_ae')
-    cnv3  = slim.conv2d(cnv2, 64, [3, 3], stride=2, scope='cnv3_ae')
-    cnv4  = slim.conv2d(cnv3, 128, [3, 3], stride=2, scope='cnv4_ae')
-    cnv5  = slim.conv2d(cnv4, 128, [3, 3], stride=2, scope='cnv5_ae')
-    cnv6  = slim.conv2d(cnv5, 256, [3, 3], stride=2, scope='cnv6_ae')
+    cnv1  = slim.conv2d(image, 16,  [3, 3], stride=1, scope='cnv1_ae')
+    cnv1 = slim.max_pool2d(cnv1, 2, stride=2)
+    cnv2  = slim.conv2d(cnv1, 32,  [3, 3], stride=1, scope='cnv2_ae')
+    cnv2 = slim.max_pool2d(cnv2, 2, stride=2)
+    cnv3  = slim.conv2d(cnv2, 64, [3, 3], stride=1, scope='cnv3_ae')
+    cnv3 = slim.max_pool2d(cnv3, 2, stride=2)
+    cnv4  = slim.conv2d(cnv3, 128, [3, 3], stride=1, scope='cnv4_ae')
+    cnv4 = slim.max_pool2d(cnv4, 2, stride=2)
+    cnv5  = slim.conv2d(cnv4, 128, [3, 3], stride=1, scope='cnv5_ae')
+    cnv5 = slim.max_pool2d(cnv5, 2, stride=2)
+    cnv6  = slim.conv2d(cnv5, 256, [3, 3], stride=1, scope='cnv6_ae')
+    cnv6 = slim.max_pool2d(cnv6, 2, stride=2)
     
-    deconv5 = slim.conv2d_transpose(cnv6, 128, [4, 4], stride=2, scope='deconv5_ae')
-    deconv4 = slim.conv2d_transpose(deconv5, 128, [4, 4], stride=2, scope='deconv4_ae')
-    deconv3 = slim.conv2d_transpose(deconv4, 64, [4, 4], stride=2, scope='deconv3_ae')
-    deconv2 = slim.conv2d_transpose(deconv3, 32, [4, 4], stride=2, scope='deconv2_ae')
-    deconv1 = slim.conv2d_transpose(deconv2, 16, [4, 4], stride=2, scope='deconv1_ae')
-    recon   = slim.conv2d_transpose(deconv1, 3, [4, 4], stride=2, scope='recon_ae', activation_fn=tf.nn.sigmoid)
+    cnv6r = tf.image.resize_bilinear(cnv6, [H/2**5, W/2**5])
+    deconv5 = slim.conv2d(cnv6r, 128, [3, 3], stride=1, scope='deconv5_ae')
+    deconv5 = tf.image.resize_bilinear(deconv5, [H/2**4, W/2**4])
+    deconv4 = slim.conv2d(deconv5, 128, [3, 3], stride=1, scope='deconv4_ae')
+    deconv4 = tf.image.resize_bilinear(deconv4, [H/2**3, W/2**3])
+    deconv3 = slim.conv2d(deconv4, 64, [3, 3], stride=1, scope='deconv3_ae')
+    deconv3 = tf.image.resize_bilinear(deconv3, [H/2**2, W/2**2])
+    deconv2 = slim.conv2d(deconv3, 32, [3, 3], stride=1, scope='deconv2_ae')
+    deconv2 = tf.image.resize_bilinear(deconv2, [H/2**1, W/2**1])
+    deconv1 = slim.conv2d(deconv2, 16, [3, 3], stride=1, scope='deconv1_ae')
+    deconv1 = tf.image.resize_bilinear(deconv1, [H, W])
+    recon   = slim.conv2d(deconv1, 3, [3, 3], stride=1, scope='recon_ae', activation_fn=tf.nn.sigmoid)
     
     return recon, [cnv2, cnv3, cnv4, cnv5, cnv6]
 
-def decoder(feature, reuse_scope=True, trainable=True, level=None):
+def decoder(feature, H, W, reuse_scope=True, trainable=True, level=None):
   with slim.arg_scope([slim.conv2d, slim.conv2d_transpose],
                       #normalizer_fn=slim.batch_norm,
                       #normalizer_params=batch_norm_params,
@@ -72,15 +86,20 @@ def decoder(feature, reuse_scope=True, trainable=True, level=None):
                       reuse=reuse_scope,
                       trainable=trainable,
                       variables_collections=["ae"]):
-    if level == 5:
-      feature = slim.conv2d(feature, 256, [3, 3], stride=2, scope='cnv6_ae')
-    deconv5 = slim.conv2d_transpose(feature, 128, [4, 4], stride=2, scope='deconv5_ae')
-    deconv4 = slim.conv2d_transpose(deconv5, 128, [4, 4], stride=2, scope='deconv4_ae')
-    deconv3 = slim.conv2d_transpose(deconv4, 64, [4, 4], stride=2, scope='deconv3_ae')
-    deconv2 = slim.conv2d_transpose(deconv3, 32, [4, 4], stride=2, scope='deconv2_ae')
-    deconv1 = slim.conv2d_transpose(deconv2, 16, [4, 4], stride=2, scope='deconv1_ae')
-    recon   = slim.conv2d_transpose(deconv1, 3, [4, 4], stride=2, scope='recon_ae', activation_fn=tf.nn.sigmoid)
-
+    
+    cnv6r = tf.image.resize_bilinear(feature, [H/2**5, W/2**5])
+    deconv5 = slim.conv2d(cnv6r, 128, [3, 3], stride=1, scope='deconv5_ae')
+    deconv5 = tf.image.resize_bilinear(deconv5, [H/2**4, W/2**4])
+    deconv4 = slim.conv2d(deconv5, 128, [3, 3], stride=1, scope='deconv4_ae')
+    deconv4 = tf.image.resize_bilinear(deconv4, [H/2**3, W/2**3])
+    deconv3 = slim.conv2d(deconv4, 64, [3, 3], stride=1, scope='deconv3_ae')
+    deconv3 = tf.image.resize_bilinear(deconv3, [H/2**2, W/2**2])
+    deconv2 = slim.conv2d(deconv3, 32, [3, 3], stride=1, scope='deconv2_ae')
+    deconv2 = tf.image.resize_bilinear(deconv2, [H/2**1, W/2**1])
+    deconv1 = slim.conv2d(deconv2, 16, [3, 3], stride=1, scope='deconv1_ae')
+    deconv1 = tf.image.resize_bilinear(deconv1, [H, W])
+    recon   = slim.conv2d(deconv1, 3, [3, 3], stride=1, scope='recon_ae', activation_fn=tf.nn.sigmoid)
+    
     return recon
   
 def sub_model(inputs, level):

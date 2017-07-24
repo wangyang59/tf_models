@@ -80,6 +80,7 @@ def build_tfrecord_input(training=True, blacklist=[], num_epochs=None):
     filenames = filenames[:index]
   else:
     filenames = filenames[index:]
+    #filenames = filenames[:index]
   filename_queue = tf.train.string_input_producer(filenames, shuffle=False, num_epochs=num_epochs)
   reader = tf.TFRecordReader()
   _, serialized_example = reader.read(filename_queue)

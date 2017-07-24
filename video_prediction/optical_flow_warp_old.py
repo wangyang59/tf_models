@@ -15,9 +15,8 @@
 import tensorflow as tf
 from tensorflow.python.platform import app
 import numpy as np
-from numpy import logical_and
 
-def transformer(U, flo, out_size, target, name='SpatialTransformer', **kwargs):
+def transformer_old(U, flo, out_size, name='SpatialTransformer', **kwargs):
     """Spatial Transformer Layer
 
     Implements a spatial transformer layer as described in [1]_.
@@ -59,8 +58,7 @@ def transformer(U, flo, out_size, target, name='SpatialTransformer', **kwargs):
             rep = tf.cast(rep, 'int32')
             x = tf.matmul(tf.reshape(x, (-1, 1)), rep)
             return tf.reshape(x, [-1])
-    
-    
+
     def _interpolate(im, x, y, out_size):
         with tf.variable_scope('_interpolate'):
             # constants
@@ -89,79 +87,43 @@ def transformer(U, flo, out_size, target, name='SpatialTransformer', **kwargs):
             y0 = tf.cast(tf.floor(y), 'int32')
             y1 = y0 + 1
             
-            xn1 = x0 - 1
-            yn1 = y0 - 1
-            x2 = x0 + 2
-            y2 = y0 + 2
-            
-            xn2 = x0 - 2
-            yn2 = y0 - 2
-            x3 = x0 + 3
-            y3 = y0 + 3
+            x0_c = tf.clip_by_value(x0, zero, max_x)
+            x1_c = tf.clip_by_value(x1, zero, max_x)
+            y0_c = tf.clip_by_value(y0, zero, max_y)
+            y1_c = tf.clip_by_value(y1, zero, max_y)
             
             dim2 = width
             dim1 = width*height
             base = _repeat(tf.range(num_batch)*dim1, out_height*out_width)
             
+            base_y0 = base + y0_c*dim2
+            base_y1 = base + y1_c*dim2
+            idx_a = base_y0 + x0_c
+            idx_b = base_y1 + x0_c
+            idx_c = base_y0 + x1_c
+            idx_d = base_y1 + x1_c
+
+            # use indices to lookup pixels in the flat image and restore
+            # channels dim
             im_flat = tf.reshape(im, tf.stack([-1, channels]))
             im_flat = tf.cast(im_flat, 'float32')
+            Ia = tf.gather(im_flat, idx_a)
+            Ib = tf.gather(im_flat, idx_b)
+            Ic = tf.gather(im_flat, idx_c)
+            Id = tf.gather(im_flat, idx_d)
             
-            target_flat = tf.reshape(target, tf.stack([-1, channels]))
-            target_flat = tf.cast(target_flat, 'float32')
-            
-            def helper(x0_, x1_, y0_, y1_, scale):
-              x0_c = tf.clip_by_value(x0_, zero, max_x)
-              x1_c = tf.clip_by_value(x1_, zero, max_x)
-              
-              y0_c = tf.clip_by_value(y0_, zero, max_y)
-              y1_c = tf.clip_by_value(y1_, zero, max_y)
-              
-              base_y0 = base + y0_c*dim2
-              base_y1 = base + y1_c*dim2
-              
-              idx_a = base_y0 + x0_c
-              idx_b = base_y1 + x0_c
-              idx_c = base_y0 + x1_c
-              idx_d = base_y1 + x1_c
-              
-              Ia = tf.gather(im_flat, idx_a)
-              Ib = tf.gather(im_flat, idx_b)
-              Ic = tf.gather(im_flat, idx_c)
-              Id = tf.gather(im_flat, idx_d)
-              
-              # and finally calculate interpolated values
-              x0_f = tf.cast(x0_, 'float32')
-              x1_f = tf.cast(x1_, 'float32')
-              y0_f = tf.cast(y0_, 'float32')
-              y1_f = tf.cast(y1_, 'float32')
-              wa = tf.expand_dims(((x1_f-x) * (y1_f-y) / scale), 1)
-              wb = tf.expand_dims(((x1_f-x) * (y-y0_f) / scale), 1)
-              wc = tf.expand_dims(((x-x0_f) * (y1_f-y) / scale), 1)
-              wd = tf.expand_dims(((x-x0_f) * (y-y0_f) / scale), 1)
-              output = tf.add_n([wa*Ia, wb*Ib, wc*Ic, wd*Id])
-              return output, [tf.expand_dims(Ia, axis=-1), 
-                              tf.expand_dims(Ib, axis=-1), 
-                              tf.expand_dims(Ic, axis=-1), 
-                              tf.expand_dims(Id, axis=-1)]
-            
-            output1, v1 = helper(x0, x1, y0, y1, 1.0)
-            output2, v2 = helper(x0, x1, yn1, y2, 3.0)
-            output3, v3 = helper(xn1, x2, y0, y1, 3.0)
-            output4, v4 = helper(xn1, x2, yn1, y2, 9.0)
-            output5, v5 = helper(xn2, x3, yn2, y3, 25.0)
-            
-            candidates = tf.concat(v1+v2+v3+v4+v5, axis=2)
-            
-            idx = tf.argmin(tf.reduce_mean(tf.abs(candidates - tf.expand_dims(target_flat, axis=-1)), axis=1, keep_dims=True), axis=2)
-            idx = tf.tile(idx, [1, channels])
-            
-            error_small_pred = tf.tile(tf.reduce_mean(tf.abs(output1 - target_flat), axis=1, keep_dims=True), [1, channels]) < 0.1
-            
-            return tf.where(tf.logical_or(error_small_pred, tf.logical_and(idx>=0, idx<4)), output1, 
-                            tf.where(tf.logical_and(idx>=4, idx<8), output2, 
-                                     tf.where(tf.logical_and(idx>=8, idx<12), output3, 
-                                              tf.where(tf.logical_and(idx>=12, idx<16), output4, output5))))
-            
+            # and finally calculate interpolated values
+            x0_f = tf.cast(x0, 'float32')
+            x1_f = tf.cast(x1, 'float32')
+            y0_f = tf.cast(y0, 'float32')
+            y1_f = tf.cast(y1, 'float32')
+            wa = tf.expand_dims(((x1_f-x) * (y1_f-y)), 1)
+            wb = tf.expand_dims(((x1_f-x) * (y-y0_f)), 1)
+            wc = tf.expand_dims(((x-x0_f) * (y1_f-y)), 1)
+            wd = tf.expand_dims(((x-x0_f) * (y-y0_f)), 1)
+            output = tf.add_n([wa*Ia, wb*Ib, wc*Ic, wd*Id])
+            return output
+
     def _meshgrid(height, width):
         with tf.variable_scope('_meshgrid'):
             # This should be equivalent to:
