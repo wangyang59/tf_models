@@ -281,8 +281,8 @@ def plot_flo_learn(image1, true_flo, pred_flo, true_warp, pred_warp,
     im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + ".jpeg"))
     
 
-def plot_flo_learn_symm(image1, true_flo, pred_flo, true_warp, pred_warp, pred_flo_r, occu_mask, occu_mask_test,
-                 output_dir, itr):
+def plot_flo_learn_symm(image1, image2, true_flo, pred_flo, true_warp, pred_warp, pred_flo_r, occu_mask, occu_mask_test,
+                 output_dir, itr, get_im=False):
   grey_cmap = plt.get_cmap("Greys")
   batch_size = image1.shape[0]
   
@@ -295,12 +295,12 @@ def plot_flo_learn_symm(image1, true_flo, pred_flo, true_warp, pred_warp, pred_f
   img_size_w = image1.shape[2]
   gap = 3
   
-  if not os.path.exists(os.path.join(output_dir, "itr_"+str(itr))):
+  if not os.path.exists(os.path.join(output_dir, "itr_"+str(itr))) and (not get_im):
     os.makedirs(os.path.join(output_dir, "itr_"+str(itr)))
-  
+  ims = []
   for cnt in range(batch_size):
     img = np.zeros((h * (img_size_h + gap), w * (img_size_w + gap), 3))
-    for idx in xrange(11):
+    for idx in xrange(12):
       i = idx % w
       j = idx // w
       
@@ -321,8 +321,10 @@ def plot_flo_learn_symm(image1, true_flo, pred_flo, true_warp, pred_warp, pred_f
       elif idx == 7:
         tmp = grey_cmap(occu_mask_test[cnt, :, :, 0])[:, :, 0:3] * 255.0
       elif idx == 8:
-        tmp = np.abs(true_warp[cnt] - image1[cnt]) * occu_mask_test[cnt] * 255.0
+        tmp = image2[cnt] * 255.0
       elif idx == 9:
+        tmp = np.abs(true_warp[cnt] - image1[cnt]) * occu_mask_test[cnt] * 255.0
+      elif idx == 10:
         tmp = np.abs(pred_warp[cnt] - image1[cnt]) * occu_mask[cnt] * 255.0
       else:
         tmp = np.abs(true_warp[cnt] - image1[cnt]) * 255.0
@@ -331,9 +333,12 @@ def plot_flo_learn_symm(image1, true_flo, pred_flo, true_warp, pred_warp, pred_f
           tmp
     
     im = Image.fromarray(img.astype('uint8'))
-
-    im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + ".jpeg"))
+    ims.append(im)
     
+    if not get_im:
+      im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + ".jpeg"))
+  
+  return ims
 
 def plot_flo_vis_grad(true_flo, pred_flo, loss2_flow2_grad, img_grad2_flow2_grad, grad_error2_flow2_grad,
                  output_dir, itr):
@@ -541,7 +546,7 @@ def plot_autoencoder(image1, image2, image1_recon, image1_recon2, image2_recon, 
     im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + "_recon.jpeg"))
     
 
-def plot_general(images, h, w, output_dir, itr, suffix=""):
+def plot_general(images, h, w, output_dir, itr, suffix="", get_im=False):
   grey_cmap = plt.get_cmap("Greys")
   batch_size = images[0].shape[0]
   img_size_h = images[0].shape[1]
@@ -549,8 +554,10 @@ def plot_general(images, h, w, output_dir, itr, suffix=""):
 
   gap = 3
   
-  if not os.path.exists(os.path.join(output_dir, "itr_"+str(itr))):
+  if not os.path.exists(os.path.join(output_dir, "itr_"+str(itr))) and (not get_im):
     os.makedirs(os.path.join(output_dir, "itr_"+str(itr)))
+  
+  ims = []
   
   for cnt in range(batch_size):
     img = np.zeros((h * (img_size_h + gap), w * (img_size_w + gap), 3))
@@ -571,9 +578,11 @@ def plot_general(images, h, w, output_dir, itr, suffix=""):
           tmp
     
     im = Image.fromarray(img.astype('uint8'))
-
-    im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + "_" + suffix + ".jpeg"))
-
+    ims.append(im)
+    if not get_im:
+      im.save(os.path.join(output_dir, "itr_"+str(itr), str(cnt) + "_" + suffix + ".jpeg"))
+  
+  return ims
 def main():
   def merge(masks, batch_num, cmap):
     assert len(masks) == 26
