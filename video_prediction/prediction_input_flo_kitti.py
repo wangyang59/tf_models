@@ -23,15 +23,13 @@ import tensorflow as tf
 from tensorflow.python.platform import flags
 from tensorflow.python.platform import gfile
 
-DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf_sintel'
-#DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf_stab/train'
 FLAGS = flags.FLAGS
 
 # Original image dimensions
-ORIGINAL_WIDTH = 1024
-ORIGINAL_HEIGHT = 436
-RESIZE_WIDTH = 1024
-RESIZE_HEIGHT = 448
+ORIGINAL_WIDTH = 1224
+ORIGINAL_HEIGHT = 370
+RESIZE_WIDTH = 1216
+RESIZE_HEIGHT = 384
 COLOR_CHAN = 3
 
 def augment_image_pair(left_image, right_image):
@@ -73,24 +71,30 @@ def build_tfrecord_input(training=True, num_epochs=None):
   Raises:
     RuntimeError: if no files found.
   """
-  clean_filenames = gfile.Glob(os.path.join("/home/wangyang59/Data/ILSVRC2016_tf_sintel_clean_train_hist", '*'))
-  final_filenames = gfile.Glob(os.path.join("/home/wangyang59/Data/ILSVRC2016_tf_sintel_final_train_hist", '*'))
+  train_2012_filenames = gfile.Glob(os.path.join("/home/wangyang59/Data/ILSVRC2016_tf_kitti_2012_train_hist", '*'))
+  train_2015_filenames = gfile.Glob(os.path.join("/home/wangyang59/Data/ILSVRC2016_tf_kitti_2015_train_hist", '*'))
+  val_2015_filenames = gfile.Glob(os.path.join("/home/wangyang59/Data/ILSVRC2016_tf_kitti_2015_val_hist", '*'))
+  val_2012_filenames = gfile.Glob(os.path.join("/home/wangyang59/Data/ILSVRC2016_tf_kitti_2012_val_hist", '*'))
   
   if training:
-    filenames = clean_filenames
+    filenames = train_2015_filenames + train_2012_filenames
   else:
-    filenames = clean_filenames
+    filenames = val_2012_filenames
     #filenames = filenames[:index]
   filename_queue = tf.train.string_input_producer(filenames, shuffle=False, num_epochs=num_epochs)
   reader = tf.TFRecordReader()
   _, serialized_example = reader.read(filename_queue)
 
-  features = {"image1_raw": tf.FixedLenFeature([1], tf.string),
-              "image2_raw": tf.FixedLenFeature([1], tf.string),
-              "flo": tf.FixedLenFeature([1], tf.string),
-              "occ":  tf.FixedLenFeature([1], tf.string),
-              "scene": tf.FixedLenFeature([1], tf.string), 
-              "file_no": tf.FixedLenFeature([1], tf.string)}
+  if training:
+    features = {"image1_raw": tf.FixedLenFeature([1], tf.string),
+                "image2_raw": tf.FixedLenFeature([1], tf.string),
+                "file_name": tf.FixedLenFeature([1], tf.string)}
+  else:
+    features = {"image1_raw": tf.FixedLenFeature([1], tf.string),
+                "image2_raw": tf.FixedLenFeature([1], tf.string),
+                "flo": tf.FixedLenFeature([1], tf.string),
+                "file_name": tf.FixedLenFeature([1], tf.string)}
+    
   features = tf.parse_single_example(serialized_example, features=features)
   
   image1_buffer = tf.reshape(features["image1_raw"], shape=[])
@@ -107,20 +111,17 @@ def build_tfrecord_input(training=True, num_epochs=None):
   image2 = tf.image.resize_bicubic(image2, [RESIZE_HEIGHT, RESIZE_WIDTH])
   image2 = tf.reshape(image2, [RESIZE_HEIGHT, RESIZE_WIDTH, COLOR_CHAN])
   
-  flo = tf.decode_raw(features['flo'], tf.float32)
-  flo = tf.reshape(flo, [ORIGINAL_HEIGHT, ORIGINAL_WIDTH, 2])
+  if not training:
+    flo = tf.decode_raw(features['flo'], tf.float32)
+    flo = tf.reshape(flo, [ORIGINAL_HEIGHT, ORIGINAL_WIDTH, 3])
   
-  occu_mask = tf.decode_raw(features['occ'], tf.uint8)
-  occu_mask = tf.cast(tf.reshape(occu_mask, [ORIGINAL_HEIGHT, ORIGINAL_WIDTH, 1]), tf.float32) / 255.0
-  
-  scene = features['scene']
-  file_no = features['file_no']
+  file_name = features['file_name']
   
   if training:
     images = tf.concat([image1, image2], axis=2)
     images = tf.image.random_flip_left_right(images)
-    images = tf.image.random_flip_up_down(images)
-    images = tf.cond(tf.random_uniform([]) < 0.5, lambda: tf.image.rot90(images, 2), lambda: images)
+    #images = tf.image.random_flip_up_down(images)
+    #images = tf.cond(tf.random_uniform([]) < 0.5, lambda: tf.image.rot90(images, 2), lambda: images)
     images.set_shape([RESIZE_HEIGHT, RESIZE_WIDTH, COLOR_CHAN*2])    
     image1, image2 =  tf.split(axis=2, num_or_size_splits=2, value=images)
     
@@ -130,7 +131,7 @@ def build_tfrecord_input(training=True, num_epochs=None):
   
   if training:
     image_batch = tf.train.shuffle_batch(
-      [image1, image2, flo, occu_mask],
+      [image1, image2],
       FLAGS.batch_size,
       num_threads=FLAGS.batch_size,
       capacity=100 * FLAGS.batch_size,
@@ -138,7 +139,7 @@ def build_tfrecord_input(training=True, num_epochs=None):
       enqueue_many=False)
   else:
     image_batch = tf.train.batch(
-      [image1, image2, flo, occu_mask, scene, file_no],
+      [image1, image2, flo, file_name],
       FLAGS.batch_size / FLAGS.num_gpus,
       #num_threads=FLAGS.batch_size / FLAGS.num_gpus,
       num_threads=1,

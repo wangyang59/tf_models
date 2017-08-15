@@ -150,9 +150,12 @@ def cal_grad_error(flo, image, beta):
   
   weights_x = tf.exp(-10.0*tf.reduce_mean(tf.abs(img_grad_x), 3, keep_dims=True))
   weights_y = tf.exp(-10.0*tf.reduce_mean(tf.abs(img_grad_y), 3, keep_dims=True))
+    
+  error += weighted_mean_L1_error(flo[:, 1:, :, :], flo[:, :-1, :, :], weights_y*beta)
+  error += weighted_mean_L1_error(flo[:, :, 1:, :], flo[:, :, :-1, :], weights_x*beta)
   
-  error += mean_charb_error_wmask(flo[:, 1:, :, :], flo[:, :-1, :, :], weights_y, beta)
-  error += mean_charb_error_wmask(flo[:, :, 1:, :], flo[:, :, :-1, :], weights_x, beta)
+  #error += mean_charb_error_wmask(flo[:, 1:, :, :], flo[:, :-1, :, :], weights_y, beta)
+  #error += mean_charb_error_wmask(flo[:, :, 1:, :], flo[:, :, :-1, :], weights_x, beta)
     
   return error / 2.0
 
@@ -607,7 +610,7 @@ def main(unused_argv):
                                               eval_model.epeInd,
                                               eval_model.true_occ_mask])
       
-      idx = epeInd > 20.0
+      idx = epeInd > 10.0
       if np.sum(idx) > 0:
         ims1 = plot_flo_learn_symm(orig_image1[idx], orig_image2[idx], true_flo[idx], pred_flo[idx], true_warp[idx], pred_warp[idx], 
                         pred_flo_r[idx], occu_mask[idx], occu_mask_test[idx], output_dir=FLAGS.output_dir, itr=itr, get_im=True)
