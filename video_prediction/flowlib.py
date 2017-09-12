@@ -13,7 +13,7 @@ import numpy as np
 import matplotlib.colors as cl
 import matplotlib.pyplot as plt
 from PIL import Image
-
+import cv2
 
 UNKNOWN_FLOW_THRESH = 1e7
 SMALLFLOW = 0.0
@@ -126,7 +126,20 @@ def read_flow_png(flow_file):
     flow[invalid_idx, 1] = 0
     return flow
 
-
+def write_flow_png(flo, flow_file):
+  h, w, _ = flo.shape
+  out_flo = np.ones((h, w, 3), dtype=np.float32)
+  out_flo[:,:,0] = np.maximum(np.minimum(flo[:,:,0]*64.0 + 2**15, 2**16-1), 0)
+  out_flo[:,:,1] = np.maximum(np.minimum(flo[:,:,1]*64.0 + 2**15, 2**16-1), 0)
+  out_flo = out_flo.astype(np.uint16)
+  
+  with open(flow_file, 'wb') as f:
+    writer = png.Writer(width=w, height=h, bitdepth=16)
+    # Convert z to the Python list of lists expected by
+    # the png writer.
+    z2list = out_flo.reshape(-1, w*3).tolist()
+    writer.write(f, z2list)
+    
 
 def write_flow(flow, filename):
     """

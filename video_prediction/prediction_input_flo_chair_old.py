@@ -22,6 +22,7 @@ import tensorflow as tf
 
 from tensorflow.python.platform import flags
 from tensorflow.python.platform import gfile
+import random
 
 DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf_chair'
 #DATA_DIR = '/home/wangyang59/Data/ILSVRC2016_tf_stab/train'
@@ -32,32 +33,6 @@ ORIGINAL_WIDTH = 512
 ORIGINAL_HEIGHT = 384
 COLOR_CHAN = 3
 
-def augment_image_pair(left_image, right_image):
-  # randomly shift gamma
-  random_gamma = tf.random_uniform([], 0.8, 1.2)
-  left_image_aug  = left_image  ** random_gamma
-  right_image_aug = right_image ** random_gamma
-
-  # randomly shift brightness
-  random_brightness = tf.random_uniform([], 0.5, 2.0)
-  left_image_aug  =  left_image_aug * random_brightness
-  right_image_aug = right_image_aug * random_brightness
- 
-  # randomly shift color
-  random_colors = tf.random_uniform([3], 0.8, 1.2)
-  white = tf.ones([tf.shape(left_image)[0], tf.shape(left_image)[1]])
-  color_image = tf.stack([white * random_colors[i] for i in range(3)], axis=2)
-  left_image_aug  *= color_image
-  right_image_aug *= color_image
-  
-  left_image_aug += tf.random_normal(shape=[ORIGINAL_HEIGHT, ORIGINAL_WIDTH, COLOR_CHAN], stddev=0.1)
-  right_image_aug += tf.random_normal(shape=[ORIGINAL_HEIGHT, ORIGINAL_WIDTH, COLOR_CHAN], stddev=0.1)
-  
-  # saturate
-  left_image_aug  = tf.clip_by_value(left_image_aug,  0, 1)
-  right_image_aug = tf.clip_by_value(right_image_aug, 0, 1)
-
-  return left_image_aug, right_image_aug
 
 def build_tfrecord_input(training=True, blacklist=[], num_epochs=None):
   """Create input tfrecord tensors.
@@ -80,7 +55,6 @@ def build_tfrecord_input(training=True, blacklist=[], num_epochs=None):
     filenames = filenames[:index]
   else:
     filenames = filenames[index:]
-    #filenames = filenames[:index]
   filename_queue = tf.train.string_input_producer(filenames, shuffle=False, num_epochs=num_epochs)
   reader = tf.TFRecordReader()
   _, serialized_example = reader.read(filename_queue)
@@ -98,7 +72,7 @@ def build_tfrecord_input(training=True, blacklist=[], num_epochs=None):
   image2_buffer = tf.reshape(features["image2_raw"], shape=[])
   image2 = tf.image.decode_jpeg(image2_buffer, channels=COLOR_CHAN)
   image2.set_shape([ORIGINAL_HEIGHT, ORIGINAL_WIDTH, COLOR_CHAN])
-  image2 = tf.cast(image2, tf.float32) /255.0
+  image2 = tf.cast(image2, tf.float32) / 255.0
   
   flo = tf.decode_raw(features['flo'], tf.float32)
   flo = tf.reshape(flo, [ORIGINAL_HEIGHT, ORIGINAL_WIDTH, 2])
@@ -108,12 +82,31 @@ def build_tfrecord_input(training=True, blacklist=[], num_epochs=None):
     images = tf.image.random_flip_left_right(images)
     images = tf.image.random_flip_up_down(images)
     images = tf.cond(tf.random_uniform([]) < 0.5, lambda: tf.image.rot90(images, 2), lambda: images)
-    images. set_shape([ORIGINAL_HEIGHT, ORIGINAL_WIDTH, COLOR_CHAN*2])    
+    images. set_shape([ORIGINAL_HEIGHT, ORIGINAL_WIDTH, COLOR_CHAN*2])
     image1, image2 =  tf.split(axis=2, num_or_size_splits=2, value=images)
-    
-    image1, image2 = tf.cond(tf.random_uniform([]) < 0.5, lambda: [image1, image2], lambda: [image2, image1])
-    #image1, image2 = tf.cond(tf.random_uniform([]) < 0.5, lambda: [image1, image2], lambda: augment_image_pair(image1, image2))
-
+#   if random.random() < 0.5:
+#     image1 = tf.image.flip_left_right(image1)
+#     image2 = tf.image.flip_left_right(image2)
+#   
+#   if random.random() < 0.5:
+#     image1 = tf.image.flip_up_down(image1)
+#     image2 = tf.image.flip_up_down(image2)
+  
+#   if random.random() < 0.5:
+#     image1 = tf.image.rot90(image1, 2)
+#     image2 = tf.image.rot90(image2, 2)
+  
+#   brightness = random.gauss(0, 0.2)
+#   image1 = tf.clip_by_value(image1+brightness, 0.0, 1.0)
+#   image2 = tf.clip_by_value(image2+brightness, 0.0, 1.0)
+  
+#   contrast = random.random()*1.6 + 0.2
+#   image1 = tf.image.adjust_contrast(image1, contrast)
+#   image2 = tf.image.adjust_contrast(image2, contrast)
+#   
+#   gamma = random.random()*0.6 + 0.7
+#   image1 = tf.image.adjust_gamma(image1, gamma)
+#   image2 = tf.image.adjust_gamma(image2, gamma)
   
   if training:
     image_batch = tf.train.shuffle_batch(
