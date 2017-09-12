@@ -222,6 +222,7 @@ def get_image_grad(image):
                     image - image_pad[:, 2:, 0:-2, :],
                     image - image_pad[:, 2:, 2:, :]], axis=3)
 
+
 def get_pyrimad(image):
   image2 = down_sample(down_sample(image))
   image3 = down_sample(image2)
@@ -229,8 +230,7 @@ def get_pyrimad(image):
   image5 = down_sample(image4)
   image6 = down_sample(image5)
 
-  return get_image_grad(image2), get_image_grad(image3), get_image_grad(image4), get_image_grad(image5), get_image_grad(image6)
-  #return image2, image3, image4, image5, image6
+  return image2, image3, image4, image5, image6
   
 def get_channel(image):
   zeros = tf.zeros_like(image)
@@ -307,6 +307,7 @@ class Model(object):
     
     image1_pyrimad = get_pyrimad(image1)
     image2_pyrimad = get_pyrimad(image2)
+
      
     image1_2, image1_3, image1_4, image1_5, image1_6 = image1_pyrimad
     image2_2, image2_3, image2_4, image2_5, image2_6 = image2_pyrimad
@@ -441,6 +442,7 @@ class Model_eval(object):
                                    clip_value_min=0.0, clip_value_max=1.0)
     
     self.occu_mask = occu_mask_2
+
     self.flow2_scale = 20*flow2
     self.file_name = file_name
     self.img_size = img_size
@@ -565,6 +567,7 @@ def main(unused_argv):
   
       flow2_scale, file_name, img_size, image1, image2, occu_mask = sess.run([eval_model.flow2_scale, eval_model.file_name, eval_model.img_size, 
                                                    eval_model.image1, eval_model.image2, eval_model.occu_mask])
+
       
       for i in range(len(flow2_scale)):
         orig_w, orig_h = img_size[i][0]

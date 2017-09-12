@@ -27,6 +27,7 @@ from optical_flow_warp import transformer
 from optical_flow_warp_fwd import transformerFwd
 from optical_flow_warp_old import transformer_old
 
+
 import os
 
 # How often to record tensorboard summaries.
@@ -437,6 +438,7 @@ class Model_eval(object):
     self.pred_flo_r = tf.image.resize_bicubic(20*tf.concat([flow2r[:,:,:,0:1], flow2r[:,:,:,1:2]/448.0*436.0], axis=3), [436, 1024])
     self.occu_mask = tf.image.resize_bicubic(occu_mask_2, [436, 1024])
     self.occu_mask_test = 1.0 - true_occ_mask
+
     
     flow2_scale = tf.image.resize_bicubic(20*tf.concat([flow2[:,:,:,0:1], flow2[:,:,:,1:2]/448.0*436.0], axis=3), [436, 1024])
     self.epe = cal_epe(true_flo, flow2_scale)
@@ -617,6 +619,7 @@ def main(unused_argv):
                              true_flo[idx], pred_flo[idx], 
                              occu_mask_test[idx], occu_mask[idx]], h=1, w=5, output_dir=FLAGS.output_dir, itr=itr, get_im=True)
         #ims2 = plot_general([tmp[idx] for tmp in small_scales], h=6, w=3, output_dir=FLAGS.output_dir, itr=itr, suffix="small", get_im=True)
+
         scene = scene[idx]
         image_no = image_no[idx]
         
@@ -626,6 +629,7 @@ def main(unused_argv):
         
         ims1[i].save(os.path.join(FLAGS.output_dir, scene[i][0], image_no[i][0] + ".jpeg"))
         #ims2[i].save(os.path.join(FLAGS.output_dir, scene[i][0], image_no[i][0] + "_small.jpeg"))
+
         
       epes.append(epe)
       occ_counts.append(occ_count)

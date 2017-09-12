@@ -182,7 +182,8 @@ def transformer(U, flo, out_size, target, name='SpatialTransformer', **kwargs):
             idx = tf.argmin(tf.reduce_mean(tf.abs(candidates - tf.expand_dims(target_flat, axis=-1)), axis=1, keep_dims=True), axis=2)
             idx = tf.tile(idx, [1, channels])
             
-            error_small_pred = tf.tile(tf.reduce_mean(tf.abs(output1 - target_flat), axis=1, keep_dims=True), [1, channels]) < 100.0
+
+            error_small_pred = tf.tile(tf.reduce_mean(tf.abs(output1 - target_flat), axis=1, keep_dims=True), [1, channels]) < 0.1
             
             return tf.where(tf.logical_or(error_small_pred, tf.logical_and(idx>=0, idx<4)), output1, 
                             tf.where(tf.logical_and(idx>=4, idx<8), output2, 

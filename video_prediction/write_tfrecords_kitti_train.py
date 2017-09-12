@@ -57,26 +57,26 @@ def convert_to(input_tuple):
   for file_name in file_names:
     image1_file, image2_file = file_name
     
-#     img=cv2.imread(image1_file)
-#     img2=cv2.imread(image2_file)
-#      
-#     img_all = np.concatenate((img, img2), axis=0)
-#     img_all_convert = hisEqulColor(img_all)
-#     img_convert, img2_convert = np.vsplit(img_all_convert, 2)
-#     
-#     cv2.imwrite("/home/wangyang59/convert1.jpeg", img_convert)
-#     cv2.imwrite("/home/wangyang59/convert2.jpeg", img2_convert)
 
-    #im = Image.open("/home/wangyang59/convert1.jpeg")
-    im = Image.open(image1_file)
+    img=cv2.imread(image1_file)
+    img2=cv2.imread(image2_file)
+     
+    img_all = np.concatenate((img, img2), axis=0)
+    img_all_convert = hisEqulColor(img_all)
+    img_convert, img2_convert = np.vsplit(img_all_convert, 2)
+    
+    cv2.imwrite("/home/wangyang59/convert1.jpeg", img_convert)
+    cv2.imwrite("/home/wangyang59/convert2.jpeg", img2_convert)
+
+    im = Image.open("/home/wangyang59/convert1.jpeg")
     im = im.crop((0, 0, 1224, 370))
     output = StringIO.StringIO()
     im.save(output, format="jpeg")
     image1_raw = output.getvalue()
     output.close()
         
-    #im = Image.open("/home/wangyang59/convert2.jpeg")
-    im = Image.open(image2_file)
+
+    im = Image.open("/home/wangyang59/convert2.jpeg")
     im = im.crop((0, 0, 1224, 370))
     output = StringIO.StringIO()
     im.save(output, format="jpeg")
@@ -97,7 +97,8 @@ def convert_to(input_tuple):
   writer.close()  
 
 def main(unused_argv):
-  data_dir = "/home/wangyang59/Data/data_scene_flow_multiview/"
+
+  data_dir = "/home/wangyang59/Data/data_stereo_flow_multiview/"
   
   file_names = os.listdir(os.path.join(data_dir, "testing", "image_2"))
   scenes = sorted(set([file_name.split("_")[0] for file_name in file_names]))
@@ -126,7 +127,7 @@ def main(unused_argv):
   inputs=[]
   
   for i in range(n/batch_size + 1):
-    output_file = "/home/wangyang59/Data/ILSVRC2016_tf_kitti_2015_train/%s.tfrecord" % i
+    output_file = "/home/wangyang59/Data/ILSVRC2016_tf_kitti_2012_train_hist/%s.tfrecord" % i
     inputs.append((output_file, training_data[i*batch_size:(i+1)*batch_size]))
   
   for input in inputs:

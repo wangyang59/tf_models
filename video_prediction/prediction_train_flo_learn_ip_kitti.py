@@ -156,6 +156,7 @@ def cal_grad_error(flo, image, beta):
   
   error += mean_charb_error_wmask(flo[:, 1:, :, :], flo[:, :-1, :, :], weights_y, beta)
   error += mean_charb_error_wmask(flo[:, :, 1:, :], flo[:, :, :-1, :], weights_x, beta)
+
     
   return error / 2.0
 
@@ -233,6 +234,7 @@ def get_image_grad2(image):
   
   return tf.concat([image] + grads, axis = 3)
 
+
 def get_pyrimad(image):
   image2 = down_sample(down_sample(image))
   image3 = down_sample(image2)
@@ -240,7 +242,6 @@ def get_pyrimad(image):
   image5 = down_sample(image4)
   image6 = down_sample(image5)
 
-  #return get_image_grad(image2), get_image_grad(image3), get_image_grad(image4), get_image_grad(image5), get_image_grad(image6)
   return image2, image3, image4, image5, image6
   
 def get_channel(image):
@@ -298,7 +299,6 @@ def rigid_loss(flow):
   Yhat = tf.matmul(Xf, beta)
   
   return mean_L1_error(Yhat, Yf)
-  
   
 def average_gradients(tower_grads):
   """Calculate the average gradient for each shared variable across all towers.
@@ -401,13 +401,14 @@ class Model(object):
     loss3 = mean_charb_error_wmask(image1_3, image1_3p, occu_mask_3, 1.0)
     loss2 = mean_charb_error_wmask(image1_2, image1_2p, occu_mask_2, 1.0)
       
-    grad_error6 = rigid_loss(20.0*flow6/64.0)
-#     grad_error5 = rigid_loss(20.0*flow5/32.0)
-#     grad_error4 = rigid_loss(20.0*flow4/16.0)
-#     grad_error3 = rigid_loss(20.0*flow3/8.0)
-#     grad_error2 = rigid_loss(20.0*flow2/4.0)
+
+#     grad_error6 = cal_grad_error(flow6, image1_6[:,:,:,0:3], 1.0/64.0)
+#     grad_error5 = cal_grad_error(flow5, image1_5[:,:,:,0:3], 1.0/32.0)
+#     grad_error4 = cal_grad_error(flow4, image1_4[:,:,:,0:3], 1.0/16.0)
+#     grad_error3 = cal_grad_error(flow3, image1_3[:,:,:,0:3], 1.0/8.0)
+#     grad_error2 = cal_grad_error(flow2, image1_2[:,:,:,0:3], 1.0/4.0)
     
-    #grad_error6 = cal_grad2_error(flow6, image1_6[:,:,:,0:3], 1.0/64.0)
+    grad_error6 = cal_grad2_error(flow6, image1_6[:,:,:,0:3], 1.0/64.0)
     grad_error5 = cal_grad2_error(flow5, image1_5[:,:,:,0:3], 1.0/32.0)
     grad_error4 = cal_grad2_error(flow4, image1_4[:,:,:,0:3], 1.0/16.0)
     grad_error3 = cal_grad2_error(flow3, image1_3[:,:,:,0:3], 1.0/8.0)
@@ -430,6 +431,7 @@ class Model(object):
 #     loss = 3.2*(loss2+img_grad_error2) + 0.8*(loss3+img_grad_error3) + \
 #            0.2*(loss4+img_grad_error4) + 0.1*(loss5+img_grad_error5) + 0.05*(loss6+img_grad_error6) + \
 #            (3.2*grad_error2 + 0.8*grad_error3 + 0.2*grad_error4 + 0.1*grad_error5 + 0.05*grad_error6)*5.0
+
          
     self.loss = loss
      

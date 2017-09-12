@@ -28,7 +28,7 @@ def read_flow_png(flow_file):
     flow_direct = flow_object.asDirect()
     flow_data = list(flow_direct[2])
     (w, h) = flow_direct[3]['size']
-    flow = np.zeros((h, w, 3), dtype=np.float32)
+    flow = np.zeros((h, w, 3), dtype=np.float64)
     for i in range(len(flow_data)):
         flow[i, :, 0] = flow_data[i][0::3]
         flow[i, :, 1] = flow_data[i][1::3]
@@ -55,9 +55,8 @@ def convert_to(input_tuple):
   print('Writing', out_name)
   
   for file_name in file_names:
-    image1_file, image2_file, flo_file = file_name
+    image1_file, image2_file = file_name
     
-
     img=cv2.imread(image1_file)
     img2=cv2.imread(image2_file)
      
@@ -75,7 +74,6 @@ def convert_to(input_tuple):
     image1_raw = output.getvalue()
     output.close()
         
-
     im = Image.open("/home/wangyang59/convert2.jpeg")
     im = im.crop((0, 0, 1224, 370))
     output = StringIO.StringIO()
@@ -83,44 +81,50 @@ def convert_to(input_tuple):
     image2_raw = output.getvalue()
     output.close()
     
-    flo = read_flow_png(flo_file)
-    flo = flo[0:370, 0:1224, :]
+#     flo = read_flow_png(flo_file)
+#     flo = flo[0:370, 0:1224, :]
     #occ = cv2.imread(occ_file, 0)
         
     example = tf.train.Example(features=tf.train.Features(feature={
         'image1_raw': _bytes_feature(image1_raw),
         'image2_raw': _bytes_feature(image2_raw),
-        'flo': _bytes_feature(flo.tostring()),
+#         'flo': _bytes_feature(flo.tostring()),
         #'occ': _bytes_feature(occ.tostring()),
         'file_name': _bytes_feature(image1_file)}))
     writer.write(example.SerializeToString())
   writer.close()  
 
 def main(unused_argv):
-
-  data_dir = "/home/wangyang59/Data/data_stereo_flow/"
+  data_dir = "/home/wangyang59/Data/data_scene_flow_multiview/"
   
   file_names = os.listdir(os.path.join(data_dir, "training", "image_2"))
   scenes = sorted(set([file_name.split("_")[0] for file_name in file_names]))
+  frames = sorted(set([file_name.split("_")[1].split(".")[0] for file_name in file_names]))
   print(scenes)
+  print(frames)
   
   training_data = []
   
   for scene in scenes:
-    file1 = os.path.join(data_dir, "training", "image_2", scene+"_10" + ".png")
-    file2 = os.path.join(data_dir, "training", "image_2", scene+"_11" + ".png")
-    flo_file = os.path.join(data_dir, "training", "flow_occ", scene+"_10"+".png")
-    training_data.append([file1, file2, flo_file])
+    for i in range(len(frames)-1):
+      if frames[i] not in ["09", "10", "11", "12"]:
+        for seg in ["training", "testing"]:
+          for image in ["image_2", "image_3"]:
+            file1 = os.path.join(data_dir, seg, image, scene+"_" + frames[i] + ".png")
+            file2 = os.path.join(data_dir, seg, image, scene+"_"+ frames[i+1] + ".png")
+            #flo_file = os.path.join(data_dir, "training", "flow_occ", scene+"_10"+".png")
+            if os.path.exists(file1) and os.path.exists(file2):
+              training_data.append([file1, file2])
           
   n = len(training_data)
   seed(42)
   shuffle(training_data)
     
-  batch_size = 64
+  batch_size = 256
   inputs=[]
   
   for i in range(n/batch_size + 1):
-    output_file = "/home/wangyang59/Data/ILSVRC2016_tf_kitti_2012_val_hist/%s.tfrecord" % i
+    output_file = "/home/wangyang59/Data/ILSVRC2016_tf_kitti_2015_train_hist/%s.tfrecord" % i
     inputs.append((output_file, training_data[i*batch_size:(i+1)*batch_size]))
   
   for input in inputs:

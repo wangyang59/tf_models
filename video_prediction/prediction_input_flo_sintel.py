@@ -77,9 +77,9 @@ def build_tfrecord_input(training=True, num_epochs=None):
   final_filenames = gfile.Glob(os.path.join("/home/wangyang59/Data/ILSVRC2016_tf_sintel_final_train_hist", '*'))
   
   if training:
-    filenames = final_filenames
+    filenames = clean_filenames
   else:
-    filenames = final_filenames
+    filenames = clean_filenames
     #filenames = filenames[:index]
   filename_queue = tf.train.string_input_producer(filenames, shuffle=False, num_epochs=num_epochs)
   reader = tf.TFRecordReader()

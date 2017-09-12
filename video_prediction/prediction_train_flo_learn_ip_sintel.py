@@ -156,6 +156,7 @@ def cal_grad_error(flo, image, beta):
   
   error += mean_charb_error_wmask(flo[:, 1:, :, :], flo[:, :-1, :, :], weights_y, beta)
   error += mean_charb_error_wmask(flo[:, :, 1:, :], flo[:, :, :-1, :], weights_x, beta)
+
     
   return error / 2.0
 
@@ -201,6 +202,7 @@ def get_image_grad(image, scale = 1.0):
                     (image - image_pad[:, 0:-2, 2:, :]) * scale,
                     (image - image_pad[:, 2:, 0:-2, :]) * scale,
                     (image - image_pad[:, 2:, 2:, :]) * scale], axis=3)
+
 
 def get_pyrimad(image):
   image2 = down_sample(down_sample(image))
@@ -402,6 +404,7 @@ class Model_eval(object):
     batch_size, H, W, color_channels = map(int, image1.get_shape()[0:4])
     image1_pyrimad = get_pyrimad(get_channel(image1))
     image2_pyrimad = get_pyrimad(get_channel(image2))
+
      
     image1_2, image1_3, image1_4, image1_5, image1_6 = image1_pyrimad
     image2_2, image2_3, image2_4, image2_5, image2_6 = image2_pyrimad
